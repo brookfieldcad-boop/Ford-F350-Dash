@@ -10,38 +10,26 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <style>
   :root{
-    --bg-0:#0a0c0e;
-    --bg-1:#14171a;
-    --bg-2:#1c2024;
-    --line:#2a2f34;
-    --text-0:#f2f0ec;
-    --text-1:#9aa0a6;
-    --accent:#39ff8a;
-    --accent-2:#8effc0;
-    --good:#3ecf7e;
-    --warn:#c9f24a;
-    --bad:#ff5f5f;
-    --steel:#4a5560;
+    --bg-0:#0a0c0e; --bg-1:#14171a; --bg-2:#1c2024; --line:#2a2f34;
+    --text-0:#f2f0ec; --text-1:#9aa0a6;
+    --accent:#39ff8a; --accent-2:#8effc0;
+    --good:#3ecf7e; --warn:#c9f24a; --bad:#ff5f5f; --steel:#4a5560;
   }
   *{box-sizing:border-box;}
   html,body{
     margin:0;padding:0;height:100%;
-    background:radial-gradient(1200px 700px at 50% -10%, #1a1e22 0%, var(--bg-0) 60%);
+    background:var(--bg-0);
     font-family:'Segoe UI', Arial, sans-serif;
     color:var(--text-0);
     overflow:hidden;
   }
-  .dash{
-    width:100vw;height:100vh;
-    display:grid;
-    grid-template-rows:auto 1fr auto;
-    padding:14px 20px 10px;
-    background-image:
-      repeating-linear-gradient(135deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 6px);
-  }
+
+  /* ---- topbar (persistent across all pages) ---- */
   .topbar{
+    position:fixed;top:0;left:0;right:0;z-index:10;
     display:flex;justify-content:space-between;align-items:center;
-    padding-bottom:8px;border-bottom:1px solid var(--line);
+    padding:12px 20px 8px;border-bottom:1px solid var(--line);
+    background:var(--bg-0);
   }
   .brand{display:flex;align-items:center;gap:10px;}
   .brand .badge{
@@ -67,41 +55,49 @@
   #connectBtn:disabled{opacity:0.6;}
   .status .clock{color:var(--text-0);font-weight:600;font-size:13px;letter-spacing:1px;}
 
-  .main{display:grid;grid-template-columns: 1.1fr 1.5fr 1.1fr;gap:14px;padding:14px 0;align-items:center;}
-  .col{display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;height:100%;}
-  .col.triple .gauge{width:126px;height:126px;}
-  .col.triple .gauge svg{width:126px;height:126px;}
-  .col.triple .gauge-center .val{font-size:21px;}
-
-  .center-cluster{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;}
-  .speed-value{
-    font-size:96px;font-weight:800;line-height:1;color:var(--text-0);
-    text-shadow:0 0 24px rgba(57,255,138,0.3);font-variant-numeric:tabular-nums;
+  /* ---- swipeable page container ---- */
+  .pager{
+    position:absolute;top:0;left:0;right:0;bottom:0;
+    display:flex;
+    overflow-x:auto;
+    overflow-y:hidden;
+    scroll-snap-type:x mandatory;
+    -webkit-overflow-scrolling:touch;
   }
-  .speed-unit{font-size:14px;letter-spacing:3px;color:var(--text-1);margin-top:-6px;}
-  .rpm-wrap{width:100%;max-width:520px;margin-top:10px;}
-  .rpm-label{display:flex;justify-content:space-between;font-size:10px;color:var(--text-1);letter-spacing:2px;margin-bottom:4px;}
-  .rpm-bar-bg{width:100%;height:16px;border-radius:8px;background:var(--bg-2);border:1px solid var(--line);overflow:hidden;position:relative;}
-  .rpm-bar-fill{
-    height:100%;border-radius:8px;
-    background:linear-gradient(90deg, #0e5f36 0%, #3ecf7e 45%, #8effc0 80%, #c9f24a 100%);
-    width:0%;transition:width 0.4s ease;box-shadow:0 0 10px rgba(57,255,138,0.4);
+  .page{
+    flex:0 0 100vw;
+    scroll-snap-align:start;
+    height:100%;
+    padding:64px 20px 34px;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    background-image:
+      repeating-linear-gradient(135deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 6px);
   }
-  .rpm-ticks{display:flex;justify-content:space-between;font-size:9px;color:var(--steel);margin-top:3px;}
 
-  .sub-strip{display:flex;gap:24px;margin-top:14px;}
-  .sub-item{text-align:center;}
-  .sub-item .val{font-size:22px;font-weight:700;color:var(--text-0);}
-  .sub-item .lbl{font-size:9px;letter-spacing:2px;color:var(--text-1);margin-top:2px;}
+  /* ---- page dots ---- */
+  .dots{
+    position:fixed;bottom:10px;left:0;right:0;z-index:10;
+    display:flex;justify-content:center;gap:8px;pointer-events:none;
+  }
+  .dots span{
+    width:6px;height:6px;border-radius:50%;background:var(--line);
+    transition:background 0.2s ease, transform 0.2s ease;
+  }
+  .dots span.active{background:var(--accent);transform:scale(1.3);box-shadow:0 0 6px rgba(57,255,138,0.6);}
 
-  .gauge{position:relative;width:158px;height:158px;}
-  .gauge svg{transform:rotate(-90deg);}
+  /* ---- shared gauge component ---- */
+  .gauge{position:relative;width:150px;height:150px;}
+  .gauge.lg{width:190px;height:190px;}
+  .gauge svg{transform:rotate(-90deg);width:100%;height:100%;}
   .gauge-track{fill:none;stroke:var(--bg-2);stroke-width:10;}
   .gauge-fill{fill:none;stroke-width:10;stroke-linecap:round;transition:stroke-dashoffset 0.5s ease;stroke-dasharray:314;stroke-dashoffset:314;}
   .gauge-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;}
   .gauge-center .val{font-size:26px;font-weight:800;color:var(--text-0);font-variant-numeric:tabular-nums;}
+  .gauge.lg .gauge-center .val{font-size:34px;}
   .gauge-center .unit{font-size:9px;color:var(--text-1);letter-spacing:1px;margin-top:1px;}
-  .gauge-center .lbl{position:absolute;bottom:8px;font-size:9px;letter-spacing:2px;color:var(--text-1);text-transform:uppercase;}
+  .gauge-center .lbl{position:absolute;bottom:10px;font-size:9px;letter-spacing:2px;color:var(--text-1);text-transform:uppercase;}
 
   .gauge.g-mint .gauge-fill{stroke:url(#gradMint);filter:drop-shadow(0 0 6px rgba(94,255,169,0.55));}
   .gauge.g-emerald .gauge-fill{stroke:url(#gradEmerald);filter:drop-shadow(0 0 6px rgba(62,207,126,0.55));}
@@ -110,28 +106,65 @@
   .gauge.g-sage .gauge-fill{stroke:url(#gradSage);filter:drop-shadow(0 0 6px rgba(140,200,150,0.5));}
   .gauge.bad .gauge-fill{stroke:var(--bad);filter:drop-shadow(0 0 5px rgba(255,95,95,0.6));}
 
-  .bottombar{display:grid;grid-template-columns: 1fr 1fr 1fr 1fr;gap:14px;padding-top:10px;border-top:1px solid var(--line);}
-  .fuel-card{background:var(--bg-1);border:1px solid var(--line);border-radius:10px;padding:10px 14px;display:flex;flex-direction:column;gap:6px;}
+  /* ---- page 1: overview ---- */
+  .overview-main{display:grid;grid-template-columns: 1.1fr 1.5fr 1.1fr;gap:14px;align-items:center;}
+  .col{display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;}
+  .col.triple .gauge{width:120px;height:120px;}
+  .col.triple .gauge-center .val{font-size:20px;}
+  .center-cluster{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;}
+  .speed-value{font-size:80px;font-weight:800;line-height:1;color:var(--text-0);text-shadow:0 0 24px rgba(57,255,138,0.3);font-variant-numeric:tabular-nums;}
+  .speed-unit{font-size:13px;letter-spacing:3px;color:var(--text-1);margin-top:-6px;}
+  .rpm-wrap{width:100%;max-width:420px;margin-top:8px;}
+  .rpm-label{display:flex;justify-content:space-between;font-size:10px;color:var(--text-1);letter-spacing:2px;margin-bottom:4px;}
+  .rpm-bar-bg{width:100%;height:14px;border-radius:7px;background:var(--bg-2);border:1px solid var(--line);overflow:hidden;}
+  .rpm-bar-fill{height:100%;border-radius:7px;background:linear-gradient(90deg, #0e5f36 0%, #3ecf7e 45%, #8effc0 80%, #c9f24a 100%);width:0%;transition:width 0.4s ease;box-shadow:0 0 10px rgba(57,255,138,0.4);}
+  .bottombar{display:grid;grid-template-columns: repeat(4,1fr);gap:12px;margin-top:20px;}
+  .fuel-card{background:var(--bg-1);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;}
   .fuel-card .top-row{display:flex;justify-content:space-between;align-items:baseline;}
-  .fuel-card .name{font-size:10px;letter-spacing:2px;color:var(--text-1);}
-  .fuel-card .num{font-size:24px;font-weight:800;color:var(--text-0);}
-  .fuel-bar-bg{width:100%;height:10px;border-radius:5px;background:var(--bg-2);overflow:hidden;}
-  .fuel-bar-fill{height:100%;border-radius:5px;width:0%;transition:width 0.4s ease;}
-  .fuel .fuel-bar-fill{background:linear-gradient(90deg,#0e5f36,#3ecf7e,#a8ffce);box-shadow:0 0 8px rgba(62,207,126,0.5);}
-  .def .fuel-bar-fill{background:linear-gradient(90deg,#06301c,#12a55a,#5dffa0);box-shadow:0 0 8px rgba(93,255,160,0.5);}
-  .fuel, .def{border-color:#33393f;}
-  .econ .num{color:var(--accent-2);}
-  .odo .num{font-size:18px;letter-spacing:1px;}
+  .fuel-card .name{font-size:9px;letter-spacing:2px;color:var(--text-1);}
+  .fuel-card .num{font-size:20px;font-weight:800;color:var(--text-0);}
+  .fuel-bar-bg{width:100%;height:8px;border-radius:4px;background:var(--bg-2);overflow:hidden;}
+  .fuel-bar-fill{height:100%;border-radius:4px;width:0%;transition:width 0.4s ease;}
+  .fuel .fuel-bar-fill{background:linear-gradient(90deg,#0e5f36,#3ecf7e,#a8ffce);}
+  .def .fuel-bar-fill{background:linear-gradient(90deg,#06301c,#12a55a,#5dffa0);}
+
+  /* ---- page 2: speed focus ---- */
+  .speed-focus{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:20px;}
+  .speed-focus .speed-value{font-size:160px;}
+  .speed-focus .speed-unit{font-size:18px;letter-spacing:4px;}
+  .speed-focus .rpm-wrap{max-width:600px;width:100%;}
+  .speed-focus .rpm-bar-bg{height:22px;border-radius:11px;}
+  .gear-row{display:flex;gap:40px;margin-top:6px;}
+  .gear-row .sub-item .val{font-size:28px;font-weight:700;}
+  .gear-row .sub-item .lbl{font-size:10px;letter-spacing:2px;color:var(--text-1);}
+
+  /* ---- page 3: diesel vitals grid ---- */
+  .diesel-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;justify-items:center;align-items:center;height:100%;}
+  .diesel-grid .gauge-center .val{font-size:30px;}
+
+  /* ---- page 4: trip / economy ---- */
+  .trip-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;height:100%;align-content:center;}
+  .trip-card{
+    background:var(--bg-1);border:1px solid var(--line);border-radius:14px;
+    padding:18px;display:flex;flex-direction:column;justify-content:center;gap:10px;
+  }
+  .trip-card .name{font-size:11px;letter-spacing:2px;color:var(--text-1);}
+  .trip-card .num{font-size:34px;font-weight:800;color:var(--text-0);}
+  .trip-card .fuel-bar-bg{height:10px;border-radius:5px;}
+  .trip-card.fuel .fuel-bar-fill{background:linear-gradient(90deg,#0e5f36,#3ecf7e,#a8ffce);}
+  .trip-card.def .fuel-bar-fill{background:linear-gradient(90deg,#06301c,#12a55a,#5dffa0);}
+  .trip-card.econ .num{color:var(--accent-2);}
+  .trip-card.temps{gap:16px;}
+  .trip-card.temps .temp-row{display:flex;justify-content:space-between;align-items:baseline;}
+  .trip-card.temps .temp-row .num{font-size:22px;}
 
   .debug{
-    position:absolute;left:20px;bottom:6px;max-width:44%;max-height:70px;overflow:auto;
-    font-size:8px;color:var(--steel);white-space:pre-wrap;font-family:monospace;opacity:0.7;
+    position:fixed;left:20px;bottom:20px;max-width:44%;max-height:60px;overflow:auto;
+    font-size:8px;color:var(--steel);white-space:pre-wrap;font-family:monospace;opacity:0.7;z-index:10;
   }
-  .footer-note{position:absolute;bottom:6px;right:20px;font-size:9px;color:var(--steel);letter-spacing:1px;}
 </style>
 </head>
 <body>
-<div class="dash">
 
   <svg width="0" height="0" style="position:absolute">
     <defs>
@@ -168,86 +201,145 @@
     </div>
   </div>
 
-  <div class="main">
+  <div class="pager" id="pager">
 
-    <div class="col triple">
-      <div class="gauge g-lime" id="g-egt">
-        <svg viewBox="0 0 120 120" width="158" height="158">
-          <circle class="gauge-track" cx="60" cy="60" r="50"/>
-          <circle class="gauge-fill" cx="60" cy="60" r="50"/>
-        </svg>
-        <div class="gauge-center"><div class="val">--</div><div class="unit">°F</div><div class="lbl">EGT</div></div>
-      </div>
-      <div class="gauge g-mint" id="g-boost">
-        <svg viewBox="0 0 120 120" width="158" height="158">
-          <circle class="gauge-track" cx="60" cy="60" r="50"/>
-          <circle class="gauge-fill" cx="60" cy="60" r="50"/>
-        </svg>
-        <div class="gauge-center"><div class="val">--</div><div class="unit">PSI</div><div class="lbl">Boost</div></div>
-      </div>
-      <div class="gauge g-forest" id="g-soot">
-        <svg viewBox="0 0 120 120" width="158" height="158">
-          <circle class="gauge-track" cx="60" cy="60" r="50"/>
-          <circle class="gauge-fill" cx="60" cy="60" r="50"/>
-        </svg>
-        <div class="gauge-center"><div class="val">--</div><div class="unit">% LOAD</div><div class="lbl">Soot</div></div>
-      </div>
-    </div>
+    <!-- PAGE 1: OVERVIEW -->
+    <section class="page" id="page-overview">
+      <div class="overview-main">
+        <div class="col triple">
+          <div class="gauge g-lime" data-metric="egt">
+            <svg viewBox="0 0 120 120"><circle class="gauge-track" cx="60" cy="60" r="50"/><circle class="gauge-fill" cx="60" cy="60" r="50"/></svg>
+            <div class="gauge-center"><div class="val">--</div><div class="unit">°F</div><div class="lbl">EGT</div></div>
+          </div>
+          <div class="gauge g-mint" data-metric="boost">
+            <svg viewBox="0 0 120 120"><circle class="gauge-track" cx="60" cy="60" r="50"/><circle class="gauge-fill" cx="60" cy="60" r="50"/></svg>
+            <div class="gauge-center"><div class="val">--</div><div class="unit">PSI</div><div class="lbl">Boost</div></div>
+          </div>
+          <div class="gauge g-forest" data-metric="soot">
+            <svg viewBox="0 0 120 120"><circle class="gauge-track" cx="60" cy="60" r="50"/><circle class="gauge-fill" cx="60" cy="60" r="50"/></svg>
+            <div class="gauge-center"><div class="val">--</div><div class="unit">% LOAD</div><div class="lbl">Soot</div></div>
+          </div>
+        </div>
 
-    <div class="center-cluster">
-      <div class="speed-value" id="speedVal">0</div>
-      <div class="speed-unit">MPH</div>
-      <div class="rpm-wrap">
-        <div class="rpm-label"><span>RPM</span><span id="rpmVal">0</span></div>
-        <div class="rpm-bar-bg"><div class="rpm-bar-fill" id="rpmBar"></div></div>
-        <div class="rpm-ticks"><span>0</span><span>1k</span><span>2k</span><span>3k</span><span>4k</span><span>5k</span></div>
-      </div>
-      <div class="sub-strip">
-        <div class="sub-item"><div class="val" id="gearVal">--</div><div class="lbl">GEAR</div></div>
-      </div>
-    </div>
+        <div class="center-cluster">
+          <div class="speed-value" data-metric="speed">0</div>
+          <div class="speed-unit">MPH</div>
+          <div class="rpm-wrap">
+            <div class="rpm-label"><span>RPM</span><span data-metric="rpm">0</span></div>
+            <div class="rpm-bar-bg"><div class="rpm-bar-fill" data-metric="rpmBar"></div></div>
+          </div>
+        </div>
 
-    <div class="col">
-      <div class="gauge g-emerald" id="g-coolant">
-        <svg viewBox="0 0 120 120" width="158" height="158">
-          <circle class="gauge-track" cx="60" cy="60" r="50"/>
-          <circle class="gauge-fill" cx="60" cy="60" r="50"/>
-        </svg>
-        <div class="gauge-center"><div class="val">--</div><div class="unit">°F</div><div class="lbl">Coolant</div></div>
+        <div class="col">
+          <div class="gauge g-emerald" data-metric="coolant">
+            <svg viewBox="0 0 120 120"><circle class="gauge-track" cx="60" cy="60" r="50"/><circle class="gauge-fill" cx="60" cy="60" r="50"/></svg>
+            <div class="gauge-center"><div class="val">--</div><div class="unit">°F</div><div class="lbl">Coolant</div></div>
+          </div>
+          <div class="gauge g-sage" data-metric="trans">
+            <svg viewBox="0 0 120 120"><circle class="gauge-track" cx="60" cy="60" r="50"/><circle class="gauge-fill" cx="60" cy="60" r="50"/></svg>
+            <div class="gauge-center"><div class="val">--</div><div class="unit">°F</div><div class="lbl">Trans</div></div>
+          </div>
+        </div>
       </div>
-      <div class="gauge g-sage" id="g-trans">
-        <svg viewBox="0 0 120 120" width="158" height="158">
-          <circle class="gauge-track" cx="60" cy="60" r="50"/>
-          <circle class="gauge-fill" cx="60" cy="60" r="50"/>
-        </svg>
-        <div class="gauge-center"><div class="val">--</div><div class="unit">°F</div><div class="lbl">Trans</div></div>
+
+      <div class="bottombar">
+        <div class="fuel-card fuel" data-metric="fuel">
+          <div class="top-row"><span class="name">FUEL</span><span class="num">--%</span></div>
+          <div class="fuel-bar-bg"><div class="fuel-bar-fill"></div></div>
+        </div>
+        <div class="fuel-card def" data-metric="def">
+          <div class="top-row"><span class="name">DEF</span><span class="num">--%</span></div>
+          <div class="fuel-bar-bg"><div class="fuel-bar-fill"></div></div>
+        </div>
+        <div class="fuel-card econ">
+          <div class="top-row"><span class="name">FUEL ECON</span><span class="num">-- MPG</span></div>
+          <div class="fuel-bar-bg"><div class="fuel-bar-fill" style="background:linear-gradient(90deg,#2c5f0e,#8ecf3e,#e4ffa8);width:0%;"></div></div>
+        </div>
+        <div class="fuel-card odo">
+          <div class="top-row"><span class="name">TRIP / ODO</span><span class="num">-- mi</span></div>
+          <div class="fuel-bar-bg"><div class="fuel-bar-fill" style="background:linear-gradient(90deg,#2f4a3a,#7fb894,#c7f0d6);width:0%;"></div></div>
+        </div>
       </div>
-    </div>
+    </section>
+
+    <!-- PAGE 2: SPEED / RPM FOCUS -->
+    <section class="page">
+      <div class="speed-focus">
+        <div class="speed-value" data-metric="speed">0</div>
+        <div class="speed-unit">MPH</div>
+        <div class="rpm-wrap">
+          <div class="rpm-label"><span>RPM</span><span data-metric="rpm">0</span></div>
+          <div class="rpm-bar-bg"><div class="rpm-bar-fill" data-metric="rpmBar"></div></div>
+        </div>
+        <div class="gear-row">
+          <div class="sub-item"><div class="val" id="gearVal">D</div><div class="lbl">GEAR</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PAGE 3: DIESEL VITALS -->
+    <section class="page">
+      <div class="diesel-grid">
+        <div class="gauge lg g-lime" data-metric="egt">
+          <svg viewBox="0 0 120 120"><circle class="gauge-track" cx="60" cy="60" r="50"/><circle class="gauge-fill" cx="60" cy="60" r="50"/></svg>
+          <div class="gauge-center"><div class="val">--</div><div class="unit">°F</div><div class="lbl">EGT</div></div>
+        </div>
+        <div class="gauge lg g-mint" data-metric="boost">
+          <svg viewBox="0 0 120 120"><circle class="gauge-track" cx="60" cy="60" r="50"/><circle class="gauge-fill" cx="60" cy="60" r="50"/></svg>
+          <div class="gauge-center"><div class="val">--</div><div class="unit">PSI</div><div class="lbl">Boost</div></div>
+        </div>
+        <div class="gauge lg g-forest" data-metric="soot">
+          <svg viewBox="0 0 120 120"><circle class="gauge-track" cx="60" cy="60" r="50"/><circle class="gauge-fill" cx="60" cy="60" r="50"/></svg>
+          <div class="gauge-center"><div class="val">--</div><div class="unit">% LOAD</div><div class="lbl">Soot</div></div>
+        </div>
+        <div class="gauge lg g-sage" data-metric="trans">
+          <svg viewBox="0 0 120 120"><circle class="gauge-track" cx="60" cy="60" r="50"/><circle class="gauge-fill" cx="60" cy="60" r="50"/></svg>
+          <div class="gauge-center"><div class="val">--</div><div class="unit">°F</div><div class="lbl">Trans</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PAGE 4: TRIP / ECONOMY -->
+    <section class="page">
+      <div class="trip-grid">
+        <div class="trip-card fuel" data-metric="fuel">
+          <div class="name">FUEL LEVEL</div>
+          <div class="num">--%</div>
+          <div class="fuel-bar-bg"><div class="fuel-bar-fill"></div></div>
+        </div>
+        <div class="trip-card def" data-metric="def">
+          <div class="name">DEF LEVEL</div>
+          <div class="num">--%</div>
+          <div class="fuel-bar-bg"><div class="fuel-bar-fill"></div></div>
+        </div>
+        <div class="trip-card econ">
+          <div class="name">FUEL ECONOMY</div>
+          <div class="num">-- MPG</div>
+          <div class="fuel-bar-bg"><div class="fuel-bar-fill" style="background:linear-gradient(90deg,#2c5f0e,#8ecf3e,#e4ffa8);width:0%;"></div></div>
+        </div>
+        <div class="trip-card odo">
+          <div class="name">TRIP DISTANCE</div>
+          <div class="num">-- mi</div>
+          <div class="fuel-bar-bg"><div class="fuel-bar-fill" style="background:linear-gradient(90deg,#2f4a3a,#7fb894,#c7f0d6);width:0%;"></div></div>
+        </div>
+        <div class="trip-card temps">
+          <div class="temp-row"><span class="name">COOLANT</span><span class="num" data-metric="coolant">--°F</span></div>
+          <div class="temp-row"><span class="name">TRANS</span><span class="num" data-metric="trans">--°F</span></div>
+        </div>
+        <div class="trip-card temps">
+          <div class="temp-row"><span class="name">SPEED</span><span class="num" data-metric="speed">--</span></div>
+          <div class="temp-row"><span class="name">RPM</span><span class="num" data-metric="rpm">--</span></div>
+        </div>
+      </div>
+    </section>
 
   </div>
 
-  <div class="bottombar">
-    <div class="fuel-card fuel" id="fuelPct">
-      <div class="top-row"><span class="name">FUEL</span><span class="num">--%</span></div>
-      <div class="fuel-bar-bg"><div class="fuel-bar-fill"></div></div>
-    </div>
-    <div class="fuel-card def" id="defPct">
-      <div class="top-row"><span class="name">DEF</span><span class="num">--%</span></div>
-      <div class="fuel-bar-bg"><div class="fuel-bar-fill"></div></div>
-    </div>
-    <div class="fuel-card econ">
-      <div class="top-row"><span class="name">FUEL ECON</span><span class="num">-- MPG</span></div>
-      <div class="fuel-bar-bg"><div class="fuel-bar-fill" style="background:linear-gradient(90deg,#2c5f0e,#8ecf3e,#e4ffa8);width:0%;"></div></div>
-    </div>
-    <div class="fuel-card odo">
-      <div class="top-row"><span class="name">TRIP / ODO</span><span class="num">-- mi</span></div>
-      <div class="fuel-bar-bg"><div class="fuel-bar-fill" style="background:linear-gradient(90deg,#2f4a3a,#7fb894,#c7f0d6);width:0%;"></div></div>
-    </div>
+  <div class="dots" id="dots">
+    <span class="active"></span><span></span><span></span><span></span>
   </div>
 
   <div class="debug" id="debugLog"></div>
-  <div class="footer-note">2021 F350 6.7L &middot; Veepeak OBDCheck BLE</div>
-</div>
 
 <script>
   function updateClock(){
@@ -256,6 +348,14 @@
   }
   updateClock();
   setInterval(updateClock, 1000 * 15);
+
+  // page-dot indicator, driven by native scroll-snap swiping
+  const pager = document.getElementById('pager');
+  const dots = document.querySelectorAll('#dots span');
+  pager.addEventListener('scroll', () => {
+    const idx = Math.round(pager.scrollLeft / pager.clientWidth);
+    dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+  }, { passive: true });
 </script>
 <script src="app.js"></script>
 </body>

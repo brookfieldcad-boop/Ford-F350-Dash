@@ -188,36 +188,45 @@ function log(msg) {
   }
 }
 
-function setGaugeValue(gaugeId, value, def) {
-  const el = document.getElementById(gaugeId);
-  if (!el) return;
-  const valEl = el.querySelector('.val');
-  if (valEl) valEl.textContent = Math.round(value);
-  const pct = Math.max(0, Math.min(1, (value - def.min) / (def.max - def.min)));
-  const fill = el.querySelector('.gauge-fill');
-  if (fill) fill.style.strokeDashoffset = 314 - pct * 314;
+// Elements are now found by [data-metric="key"] instead of a single id,
+// since the same reading (e.g. coolant temp) can appear on more than one
+// swipeable page at once. querySelectorAll + forEach keeps every copy in sync.
+
+function setGaugeValue(els, value, def) {
+  els.forEach((el) => {
+    const valEl = el.querySelector('.val');
+    if (valEl) {
+      // full gauge widget (dial + fill arc)
+      valEl.textContent = Math.round(value);
+      const pct = Math.max(0, Math.min(1, (value - def.min) / (def.max - def.min)));
+      const fill = el.querySelector('.gauge-fill');
+      if (fill) fill.style.strokeDashoffset = 314 - pct * 314;
+    } else {
+      // plain text readout (e.g. a temp shown as a simple number on a summary page)
+      el.textContent = Math.round(value) + def.unit;
+    }
+  });
 }
 
 function applyReading(key, value) {
   const def = PIDS[key];
+  const els = document.querySelectorAll(`[data-metric="${key}"]`);
   if (def.kind === 'text') {
-    const el = document.getElementById(def.gauge);
-    if (el) el.textContent = Math.round(value);
+    els.forEach((el) => { el.textContent = Math.round(value); });
   } else if (def.kind === 'rpm') {
-    const el = document.getElementById(def.gauge);
-    if (el) el.textContent = Math.round(value).toLocaleString();
-    const bar = document.getElementById('rpmBar');
-    if (bar) bar.style.width = Math.min(100, (value / 5000) * 100) + '%';
+    els.forEach((el) => { el.textContent = Math.round(value).toLocaleString(); });
+    document.querySelectorAll('[data-metric="rpmBar"]').forEach((bar) => {
+      bar.style.width = Math.min(100, (value / 5000) * 100) + '%';
+    });
   } else if (def.kind === 'gauge') {
-    setGaugeValue(def.gauge, value, def);
+    setGaugeValue(els, value, def);
   } else if (def.kind === 'bar') {
-    const el = document.getElementById(def.gauge);
-    if (el) {
+    els.forEach((el) => {
       const fill = el.querySelector('.fuel-bar-fill');
       const num = el.querySelector('.num');
       if (fill) fill.style.width = Math.max(0, Math.min(100, value)) + '%';
       if (num) num.textContent = Math.round(value) + '%';
-    }
+    });
   }
 }
 
