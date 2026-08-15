@@ -4,7 +4,7 @@
   "description": "Live OBD2 dashboard for 2021 F350 6.7L Powerstroke",
   "start_url": "./index.html",
   "display": "fullscreen",
-  "orientation": "any",
+  "orientation": "portrait",
   "background_color": "#0a0c0e",
   "theme_color": "#0a0c0e",
   "icons": [
