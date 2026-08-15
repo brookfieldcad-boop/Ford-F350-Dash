@@ -32,7 +32,7 @@ const KNOWN_UART_SERVICES = [
   '6e400001-b5a3-f393-e0a9-e50e24dcca9e', // Nordic UART Service (very common)
   '0000fff0-0000-1000-8000-00805f9b34fb', // generic FFF0 UART clone
   '0000ffe0-0000-1000-8000-00805f9b34fb', // HM-10/CC41 UART clone
-  '18f0',
+  '0000fee7-0000-1000-8000-00805f9b34fb', // additional common OBD BLE clone service
   'e7810a71-73ae-499d-8c15-faa9aef0c3f2', // some OBDLink/Veepeak BLE clones
 ];
 
