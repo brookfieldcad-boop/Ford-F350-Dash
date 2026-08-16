@@ -46,13 +46,26 @@ class ELM327 {
     this.connected = false;
   }
 
+  // Shows the browser's device picker — required the first time (a real user
+  // tap is mandatory here), but the permission it grants is remembered by
+  // Chrome afterward, which is what lets connectToKnownDevice() skip it later.
   async connect(log) {
     log('Requesting BLE device…');
-    this.device = await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true,
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'OBD' }],
       optionalServices: KNOWN_UART_SERVICES,
     });
+    await this._connectToDevice(device, log);
+  }
 
+  // Silently reconnects to a device Chrome already has permission for,
+  // with no picker dialog — used for auto-connect on app launch.
+  async connectToKnownDevice(device, log) {
+    await this._connectToDevice(device, log);
+  }
+
+  async _connectToDevice(device, log) {
+    this.device = device;
     log(`Connecting to ${this.device.name || 'device'}…`);
     this.device.addEventListener('gattserverdisconnected', () => {
       this.connected = false;
@@ -254,9 +267,7 @@ connectBtn.addEventListener('click', async () => {
   statusText.textContent = 'Connecting…';
   try {
     await elm.connect(log);
-    statusText.textContent = 'Connected — live data';
-    statusContainer.classList.add('live');
-    pollLoop();
+    await markConnected();
   } catch (err) {
     statusText.textContent = 'Connection failed: ' + err.message;
     log('ERROR: ' + err.message);
@@ -264,6 +275,34 @@ connectBtn.addEventListener('click', async () => {
     connectBtn.disabled = false;
   }
 });
+
+async function markConnected() {
+  statusText.textContent = 'Connected — live data';
+  statusContainer.classList.add('live');
+  pollLoop();
+}
+
+// Silent auto-connect: Chrome remembers devices you've granted permission
+// to via the picker (navigator.bluetooth.getDevices()). If the OBDII dongle
+// is already authorized and currently in range/on, reconnect with zero taps.
+// If not (first run ever, or the dongle isn't visible yet), this just does
+// nothing and the CONNECT OBD button remains available as normal.
+async function tryAutoConnect() {
+  if (!navigator.bluetooth || !navigator.bluetooth.getDevices) return;
+  try {
+    const known = await navigator.bluetooth.getDevices();
+    const obd = known.find((d) => (d.name || '').toUpperCase().startsWith('OBD'));
+    if (!obd) return;
+    statusText.textContent = 'Reconnecting to ' + obd.name + '…';
+    await elm.connectToKnownDevice(obd, log);
+    await markConnected();
+  } catch (err) {
+    // Dongle not powered/in range, or needs the picker again — silently fall
+    // back to manual connect, no error shown since this was an automatic attempt.
+    log('Auto-connect skipped: ' + err.message);
+  }
+}
+window.addEventListener('load', tryAutoConnect);
 
 // register service worker for offline install
 if ('serviceWorker' in navigator) {
