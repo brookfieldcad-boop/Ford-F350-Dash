@@ -76,6 +76,22 @@
       repeating-linear-gradient(135deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 6px);
   }
 
+  /* ---- 4wd page ---- */
+  .fourwd{display:flex;flex-direction:column;align-items:center;justify-content:center;
+          height:100%;gap:34px;padding:20px;}
+  .fourwd-mode{text-align:center;}
+  .fourwd-mode .name{font-size:13px;letter-spacing:2px;color:var(--text-1);margin-bottom:14px;}
+  .mode-row{display:flex;gap:18px;}
+  .mode{font-size:34px;font-weight:700;padding:14px 26px;border-radius:14px;
+        border:1px solid var(--line);color:var(--text-1);background:var(--bg-1);}
+  .mode.on{color:#0a0c0e;background:var(--accent);border-color:var(--accent);
+           box-shadow:0 0 18px rgba(57,255,138,0.45);}
+  .fourwd-cards{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;width:100%;max-width:520px;}
+  .fourwd-cards .card{background:var(--bg-1);border:1px solid var(--line);border-radius:16px;padding:18px;text-align:center;}
+  .fourwd-cards .name{font-size:12px;letter-spacing:1.5px;color:var(--text-1);margin-bottom:8px;}
+  .fourwd-cards .num{font-size:30px;font-weight:700;}
+  .fourwd-cards .num.on{color:var(--accent);text-shadow:0 0 12px rgba(57,255,138,0.5);}
+
   /* ---- page dots ---- */
   .dots{
     position:fixed;bottom:10px;left:0;right:0;z-index:10;
@@ -296,6 +312,14 @@
           <svg viewBox="0 0 120 120"><circle class="gauge-track" cx="60" cy="60" r="50"/><circle class="gauge-fill" cx="60" cy="60" r="50"/></svg>
           <div class="gauge-center"><div class="val">--</div><div class="unit">°C</div><div class="lbl">Trans</div></div>
         </div>
+        <div class="gauge lg g-emerald" data-metric="oiltemp">
+          <svg viewBox="0 0 120 120"><circle class="gauge-track" cx="60" cy="60" r="50"/><circle class="gauge-fill" cx="60" cy="60" r="50"/></svg>
+          <div class="gauge-center"><div class="val">--</div><div class="unit">°C</div><div class="lbl">Oil Temp</div></div>
+        </div>
+        <div class="gauge lg g-lime" data-metric="oilpress">
+          <svg viewBox="0 0 120 120"><circle class="gauge-track" cx="60" cy="60" r="50"/><circle class="gauge-fill" cx="60" cy="60" r="50"/></svg>
+          <div class="gauge-center"><div class="val">--</div><div class="unit">PSI</div><div class="lbl">Oil Press</div></div>
+        </div>
       </div>
     </section>
 
@@ -333,10 +357,34 @@
       </div>
     </section>
 
+    <!-- PAGE 5: 4WD / DRIVELINE -->
+    <section class="page">
+      <div class="fourwd">
+        <div class="fourwd-mode">
+          <div class="name">DRIVE MODE</div>
+          <div class="mode-row">
+            <span class="mode" data-mode="2H">2H</span>
+            <span class="mode" data-mode="4H">4H</span>
+            <span class="mode" data-mode="4L">4L</span>
+          </div>
+        </div>
+        <div class="fourwd-cards">
+          <div class="card">
+            <div class="name">REAR DIFF LOCK</div>
+            <div class="num" data-metric="difflock">--</div>
+          </div>
+          <div class="card">
+            <div class="name">TRANSFER CASE</div>
+            <div class="num" data-metric="tcase">--</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </div>
 
   <div class="dots" id="dots">
-    <span class="active"></span><span></span><span></span><span></span>
+    <span class="active"></span><span></span><span></span><span></span><span></span>
   </div>
 
   <div class="debug" id="debugLog"></div>

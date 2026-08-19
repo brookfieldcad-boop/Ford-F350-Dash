@@ -30,11 +30,31 @@ const PIDS = {
   soot:    { mode: '22', pid: '042C', bytes: 2, decode: b => ((((b[0] * 256) + b[1]) * (100 / 65535)) - 1) / 1.75 * 100, unit: '%', gauge: 'g-soot', kind: 'gauge', min: 0, max: 100 },
   trans:   { mode: '22', pid: '1E1C', bytes: 2, decode: b => C((((b[0] << 24 >> 24) * 256) + b[1]) * (9 / 80) + 32), unit: '°C', gauge: 'g-trans', kind: 'gauge', min: 40, max: 140 },
   def:     { mode: '22', pid: 'F485', bytes: 1, decode: b => (b[0] / 15) * 100, unit: '%', gauge: 'defPct', kind: 'bar' },
+  // 015C is a standard OBD2 PID (engine oil temperature, A-40 in °C).
+  oiltemp: { mode: '01', pid: '5C', bytes: 1, decode: b => b[0] - 40, unit: '°C', gauge: 'g-oiltemp', kind: 'gauge', min: 40, max: 140 },
+  // Oil pressure is NOT standard OBD2 — resolved by probe at connect.
+  oilpress:{ mode: '22', pid: '1668', bytes: 2, decode: b => ((b[0] * 256) + b[1]) * 0.0145038, unit: 'PSI', gauge: 'g-oilpress', kind: 'gauge', min: 0, max: 90 },
 };
 
 // 22042C answered NO DATA on this 2021 — that PID list dates from 2014-era
 // trucks. Rather than guess, try each candidate once at connect and keep
 // whichever the ECU actually answers. The log names the winner.
+// DEF read a flat 100% all drive with (A/15)*100 — that divisor is almost
+// certainly wrong for a 2021. Probe the usual scalings instead.
+const DEF_CANDIDATES = [
+  { mode: '22', pid: 'F485', bytes: 1, decode: b => (b[0] / 255) * 100 },
+  { mode: '22', pid: 'F485', bytes: 1, decode: b => b[0] * 0.4 },
+  { mode: '22', pid: 'F485', bytes: 1, decode: b => (b[0] / 15) * 100 },
+  { mode: '01', pid: '9B',   bytes: 4, decode: b => (b[1] / 255) * 100 },
+];
+
+const OILPRESS_CANDIDATES = [
+  { mode: '22', pid: '1668', bytes: 2, decode: b => ((b[0] * 256) + b[1]) * 0.0145038 },
+  { mode: '22', pid: '0470', bytes: 2, decode: b => ((b[0] * 256) + b[1]) * 0.0145038 },
+  { mode: '22', pid: 'F454', bytes: 1, decode: b => b[0] * 0.580151 },
+  { mode: '01', pid: '0A',   bytes: 1, decode: b => b[0] * 0.145038 },
+];
+
 const SOOT_CANDIDATES = [
   { mode: '22', pid: '042C', bytes: 2, decode: b => ((((b[0] * 256) + b[1]) * (100 / 65535)) - 1) / 1.75 * 100 },
   { mode: '22', pid: '045C', bytes: 2, decode: b => ((b[0] * 256) + b[1]) * (100 / 65535) },
@@ -43,7 +63,7 @@ const SOOT_CANDIDATES = [
   { mode: '01', pid: '7C',   bytes: 4, decode: b => ((b[0] * 256) + b[1]) * (100 / 65535) },
 ];
 
-const POLL_ORDER = ['speed', 'rpm', 'coolant', 'fuel', 'egt', 'boost', 'soot', 'trans', 'def'];
+const POLL_ORDER = ['speed', 'rpm', 'coolant', 'fuel', 'egt', 'boost', 'soot', 'trans', 'def', 'oiltemp', 'oilpress'];
 
 // ---- BLE UART auto-detect --------------------------------------
 // Cheap ELM327 BLE modules (incl. many Veepeak units) expose a
@@ -63,6 +83,9 @@ const KNOWN_UART_SERVICES = [
 ];
 
 // Exact characteristic layout confirmed on this unit.
+// A Ford module's response ID is its request ID + 8 (BCM 726 -> 72E).
+const FORD_RESPONSE_ID = (h) => (parseInt(h, 16) + 8).toString(16).toUpperCase();
+
 const VEEPEAK = {
   service: '0000fff0-0000-1000-8000-00805f9b34fb',
   tx:      '0000fff2-0000-1000-8000-00805f9b34fb', // WRITE / WRITE NO RESPONSE
@@ -271,22 +294,42 @@ class ELM327 {
     }
   }
 
-  // Ask the truck which soot PID it actually answers instead of assuming.
-  async _probeSoot(log) {
-    for (const cand of SOOT_CANDIDATES) {
+  // Ask the truck which PID it actually answers instead of assuming.
+  async _probe(key, candidates, label, log, sane) {
+    for (const cand of candidates) {
       try {
         const v = await this.readPid(cand);
-        if (Number.isFinite(v)) {
-          PIDS.soot = { ...PIDS.soot, ...cand };
-          log(`Soot PID ${cand.mode}${cand.pid} answered (${v.toFixed(1)}) — using it.`);
-          return;
+        if (Number.isFinite(v) && (!sane || sane(v))) {
+          PIDS[key] = { ...PIDS[key], ...cand };
+          log(`${label}: ${cand.mode}${cand.pid} answered ${v.toFixed(1)} — using it.`);
+          return true;
         }
       } catch (e) { /* try the next candidate */ }
     }
-    log('No soot PID answered. Needs FORScan to identify the right one for a 2021.');
+    log(`${label}: nothing answered. FORScan can show the right PID for a 2021.`);
+    return false;
+  }
+
+  async _probeSoot(log) {
+    await this._probe('soot', SOOT_CANDIDATES, 'Soot', log, v => v >= -5 && v <= 105);
+    await this._probe('def', DEF_CANDIDATES, 'DEF', log, v => v >= 0 && v <= 100);
+    await this._probe('oilpress', OILPRESS_CANDIDATES, 'Oil pressure', log, v => v >= 0 && v <= 120);
+  }
+
+  // Ford modules other than the PCM answer on their own CAN IDs — FORScan
+  // switches with ATSH (e.g. ATSH 726 = BCM, 7E0 = PCM). Any PID carrying a
+  // `header` gets the ELM re-pointed before the request. This is what an
+  // upfitter-switch readout would need.
+  async _setHeader(header) {
+    if (this._curHeader === header) return;
+    await this.sendCommand('ATSH ' + header, 2000);
+    if (header !== '7E0') await this.sendCommand('ATCRA ' + FORD_RESPONSE_ID(header), 2000).catch(() => {});
+    else await this.sendCommand('ATCRA', 2000).catch(() => {});
+    this._curHeader = header;
   }
 
   async readPid(def) {
+    await this._setHeader(def.header || '7E0');
     const cmd = def.mode + def.pid;
     const raw = await this.sendCommand(cmd, 2500);
     return this._parseResponse(raw, def);
@@ -346,7 +389,27 @@ function setGaugeValue(els, value, def) {
   });
 }
 
+// 4WD page: drive mode is a state, not a number, so it lights one of the
+// three chips rather than driving a gauge. Wired up but inert until we have
+// real PIDs — see the note in the README about pulling them from FORScan.
+function applyDriveMode(mode) {
+  document.querySelectorAll('.mode').forEach((el) => {
+    el.classList.toggle('on', el.dataset.mode === mode);
+  });
+  const tc = document.querySelector('[data-metric="tcase"]');
+  if (tc) tc.textContent = mode || '--';
+}
+
+function applyDiffLock(locked) {
+  const el = document.querySelector('[data-metric="difflock"]');
+  if (!el) return;
+  el.textContent = locked ? 'LOCKED' : 'OPEN';
+  el.classList.toggle('on', !!locked);
+}
+
 function applyReading(key, value) {
+  if (key === 'drivemode') return applyDriveMode(value);
+  if (key === 'difflock') return applyDiffLock(value);
   const def = PIDS[key];
   const els = document.querySelectorAll(`[data-metric="${key}"]`);
   if (def.kind === 'text') {
