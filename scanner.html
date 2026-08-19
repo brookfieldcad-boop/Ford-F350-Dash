@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>F350 PID Scanner</title>
+<style>
+  :root{--bg-0:#0a0c0e;--bg-1:#14171a;--bg-2:#1c2024;--line:#2a2f34;
+        --text-0:#f2f0ec;--text-1:#9aa0a6;--accent:#39ff8a;--warn:#c9f24a;--bad:#ff5f5f;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{margin:0;background:var(--bg-0);color:var(--text-0);
+       font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;}
+  header{position:sticky;top:0;background:var(--bg-1);border-bottom:1px solid var(--line);
+         padding:10px 12px;z-index:5;}
+  h1{margin:0 0 2px;font-size:15px;letter-spacing:1px;}
+  .sub{color:var(--text-1);font-size:11px;}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+  button{background:var(--bg-2);color:var(--text-0);border:1px solid var(--line);
+         border-radius:9px;padding:9px 12px;font:inherit;font-size:13px;}
+  button.go{background:var(--accent);color:#0a0c0e;border-color:var(--accent);font-weight:700;}
+  button:disabled{opacity:.4;}
+  input{background:var(--bg-2);color:var(--text-0);border:1px solid var(--line);
+        border-radius:9px;padding:8px;font:inherit;width:82px;}
+  label{color:var(--text-1);font-size:11px;display:flex;flex-direction:column;gap:3px;}
+  section{padding:12px;border-bottom:1px solid var(--line);}
+  h2{font-size:12px;letter-spacing:1.5px;color:var(--text-1);margin:0 0 8px;font-weight:400;}
+  #log{white-space:pre-wrap;word-break:break-word;padding:12px;font-size:12px;
+       color:var(--text-1);min-height:40vh;}
+  .hit{color:var(--accent);}
+  .chg{color:var(--warn);}
+  .err{color:var(--bad);}
+  #bar{height:4px;background:var(--bg-2);}
+  #bar>div{height:100%;width:0;background:var(--accent);transition:width .15s;}
+</style>
+</head>
+<body>
+<header>
+  <h1>F350 PID SCANNER</h1>
+  <div class="sub" id="status">Not connected</div>
+  <div class="row">
+    <button class="go" id="btnConnect">CONNECT</button>
+    <button id="btnStop" disabled>STOP</button>
+    <button id="btnCopy">COPY RESULTS</button>
+    <button id="btnClear">CLEAR</button>
+  </div>
+</header>
+<div id="bar"><div></div></div>
+
+<section>
+  <h2>1 — STANDARD PIDS (fast, ~10s)</h2>
+  <div class="sub">Asks the ECU which Mode&nbsp;01 PIDs it supports, then reads each one.</div>
+  <div class="row"><button id="btnStd">SCAN STANDARD PIDS</button></div>
+</section>
+
+<section>
+  <h2>2 — FIND MODULES</h2>
+  <div class="sub">Pings known Ford module addresses to see which answer.</div>
+  <div class="row"><button id="btnMods">DISCOVER MODULES</button></div>
+</section>
+
+<section>
+  <h2>3 — MODE 22 SWEEP</h2>
+  <div class="sub">Slow. 0000-FFFF on one module is ~1.5h. Start with a narrow range.</div>
+  <div class="row">
+    <label>MODULE<input id="hdr" value="7E0"></label>
+    <label>FROM<input id="from" value="0400"></label>
+    <label>TO<input id="to" value="04FF"></label>
+    <button id="btnSweep">SWEEP</button>
+  </div>
+</section>
+
+<section>
+  <h2>4 — SNAPSHOT &amp; DIFF <span style="color:var(--accent)">&larr; use this for 4WD</span></h2>
+  <div class="sub">Snapshot A, change the truck (4H&rarr;4L, lock the diff, flip an upfitter),
+    snapshot B, then DIFF. Only PIDs whose value changed are listed.</div>
+  <div class="row">
+    <button id="btnA">SNAPSHOT A</button>
+    <button id="btnB">SNAPSHOT B</button>
+    <button id="btnDiff">DIFF</button>
+  </div>
+</section>
+
+<div id="log"></div>
+
+<script>
+const FFF0='0000fff0-0000-1000-8000-00805f9b34fb';
+const FFF2='0000fff2-0000-1000-8000-00805f9b34fb';
+const FFF1='0000fff1-0000-1000-8000-00805f9b34fb';
+const EXTRA=['6e400001-b5a3-f393-e0a9-e50e24dcca9e','0000ffe0-0000-1000-8000-00805f9b34fb',
+  '0000d0ff-3c17-d293-8e48-14fe2e4da212','00006287-3c17-d293-8e48-14fe2e4da212'];
+
+// Ford module request IDs. Response is request+8.
+const MODULES=[
+  ['7E0','PCM'],['7E1','TCM'],['7E2','—'],['726','BCM'],['727','IPC/Cluster'],
+  ['730','ABS'],['733','RCM'],['736','4x4 / TCCM'],['737','PSCM'],['760','ABS/ESC'],
+  ['765','GWM'],['7A6','—'],['7D0','APIM/SYNC'],['7E4','—'],['764','—'],['716','—'],
+];
+
+const logEl=document.getElementById('log'), statusEl=document.getElementById('status');
+const barEl=document.querySelector('#bar>div');
+let lines=[];
+function log(s,cls){lines.push(s);const d=document.createElement('div');
+  if(cls)d.className=cls;d.textContent=s;logEl.appendChild(d);
+  logEl.scrollTop=logEl.scrollHeight;}
+function prog(p){barEl.style.width=(p*100).toFixed(1)+'%';}
+
+let stop=false;
+document.getElementById('btnStop').onclick=()=>{stop=true;log('— stopping —','err');};
+document.getElementById('btnClear').onclick=()=>{lines=[];logEl.innerHTML='';};
+document.getElementById('btnCopy').onclick=async()=>{
+  try{await navigator.clipboard.writeText(lines.join('\n'));statusEl.textContent='Results copied';}
+  catch(e){statusEl.textContent='Copy failed — long-press the log instead';}};
+
+class Elm{
+  constructor(){this.buf='';this.pending=null;this.hdr=null;}
+  async connect(){
+    const dev=await navigator.bluetooth.requestDevice({acceptAllDevices:true,
+      optionalServices:[FFF0,...EXTRA]});
+    const srv=await dev.gatt.connect();
+    const s=await srv.getPrimaryService(FFF0);
+    this.tx=await s.getCharacteristic(FFF2);
+    this.rx=await s.getCharacteristic(FFF1);
+    await this.rx.startNotifications();
+    this.rx.addEventListener('characteristicvaluechanged',e=>this._rx(e));
+    this.dev=dev;
+    for(const c of ['ATZ','ATE0','ATL0','ATS0','ATH0','ATSP0'])
+      await this.cmd(c,3000).catch(()=>{});
+    return dev.name||'adapter';
+  }
+  _rx(e){this.buf+=new TextDecoder().decode(e.target.value);
+    if(this.buf.includes('>')){const f=this.buf;this.buf='';
+      if(this.pending){const p=this.pending;this.pending=null;p(f);}}}
+  cmd(c,ms=900){return new Promise((res,rej)=>{
+    const t=setTimeout(()=>{this.pending=null;rej(new Error('timeout'));},ms);
+    this.pending=v=>{clearTimeout(t);res(v);};
+    (async()=>{const d=new TextEncoder().encode(c+'\r');
+      for(let i=0;i<d.length;i+=20){
+        const ch=d.slice(i,i+20);
+        try{ this.tx.properties.writeWithoutResponse
+             ? await this.tx.writeValueWithoutResponse(ch)
+             : await this.tx.writeValue(ch); }
+        catch(err){ clearTimeout(t); this.pending=null; rej(err); return; }
+      }})();
+  });}
+  async setHdr(h){
+    if(this.hdr===h)return;
+    await this.cmd('ATSH '+h,1500).catch(()=>{});
+    const resp=(parseInt(h,16)+8).toString(16).toUpperCase();
+    await this.cmd('ATCRA '+resp,1500).catch(()=>{});
+    this.hdr=h;
+  }
+  // Returns the hex payload after the positive-response header, or null.
+  async ask(cmd,expect,ms=900){
+    let raw;
+    try{raw=await this.cmd(cmd,ms);}catch(e){return null;}
+    const up=raw.toUpperCase();
+    if(up.includes('NO DATA')||up.includes('ERROR')||up.includes('?'))return null;
+    const hex=up.replace(/[^0-9A-F]/g,'');
+    const i=hex.indexOf(expect);
+    if(i===-1)return null;
+    return hex.slice(i+expect.length);
+  }
+}
+const elm=new Elm();
+
+document.getElementById('btnConnect').onclick=async()=>{
+  try{statusEl.textContent='Connecting…';
+    const n=await elm.connect();
+    statusEl.textContent='Connected to '+n;
+    log('Connected. ELM327 ready.','hit');
+  }catch(e){statusEl.textContent='Failed: '+e.message;log('ERROR '+e.message,'err');}
+};
+
+// ---- 1. standard PIDs via the supported-PID bitmasks ----
+async function scanStandard(){
+  stop=false;log('\n=== STANDARD MODE 01 PIDS ===');
+  await elm.setHdr('7E0');
+  const supported=[];
+  for(const base of [0x00,0x20,0x40,0x60,0x80,0xA0,0xC0]){
+    const h=base.toString(16).padStart(2,'0').toUpperCase();
+    const p=await elm.ask('01'+h,'41'+h,1500);
+    if(!p||p.length<8){log(`  01${h} bitmask: none`);continue;}
+    const mask=parseInt(p.slice(0,8),16);
+    for(let bit=0;bit<32;bit++)
+      if(mask&(1<<(31-bit)))supported.push(base+bit+1);
+    log(`  01${h} bitmask ${p.slice(0,8)}`);
+  }
+  log(`Supported: ${supported.length} PIDs`,'hit');
+  let i=0;
+  for(const pid of supported){
+    if(stop)break;
+    const h=pid.toString(16).padStart(2,'0').toUpperCase();
+    const p=await elm.ask('01'+h,'41'+h,1200);
+    log(`  01${h} = ${p===null?'(no reply)':p}`,p?'hit':null);
+    prog(++i/supported.length);
+  }
+  prog(0);log('=== done ===','hit');
+}
+document.getElementById('btnStd').onclick=()=>scanStandard().catch(e=>log('ERROR '+e.message,'err'));
+
+// ---- 2. module discovery ----
+async function findModules(){
+  stop=false;log('\n=== MODULES ===');
+  for(const [id,name] of MODULES){
+    if(stop)break;
+    await elm.setHdr(id);
+    // F190 = VIN-ish identifier most Ford modules answer
+    const a=await elm.ask('22F190','62F190',900) || await elm.ask('3E00','7E',700);
+    log(`  ${id} ${name.padEnd(12)} ${a?'RESPONDS':'-'}`,a?'hit':null);
+  }
+  await elm.setHdr('7E0');
+  log('=== done ===','hit');
+}
+document.getElementById('btnMods').onclick=()=>findModules().catch(e=>log('ERROR '+e.message,'err'));
+
+// ---- 3. mode 22 sweep ----
+async function sweep(){
+  stop=false;
+  const hdr=document.getElementById('hdr').value.trim().toUpperCase();
+  const from=parseInt(document.getElementById('from').value,16);
+  const to=parseInt(document.getElementById('to').value,16);
+  log(`\n=== SWEEP ${hdr} ${from.toString(16)}-${to.toString(16)} ===`);
+  await elm.setHdr(hdr);
+  let hits=0;
+  for(let p=from;p<=to;p++){
+    if(stop)break;
+    const h=p.toString(16).padStart(4,'0').toUpperCase();
+    const r=await elm.ask('22'+h,'62'+h,700);
+    if(r){hits++;log(`  22${h} = ${r}`,'hit');}
+    prog((p-from)/(to-from||1));
+  }
+  prog(0);log(`=== ${hits} responded ===`,'hit');
+}
+document.getElementById('btnSweep').onclick=()=>sweep().catch(e=>log('ERROR '+e.message,'err'));
+
+// ---- 4. snapshot + diff ----
+// The point: you don't need to know which PID means "diff lock". Capture
+// everything, change the truck, capture again, and let the diff name it.
+let snapA=null,snapB=null;
+async function snapshot(){
+  const hdr=document.getElementById('hdr').value.trim().toUpperCase();
+  const from=parseInt(document.getElementById('from').value,16);
+  const to=parseInt(document.getElementById('to').value,16);
+  await elm.setHdr(hdr);
+  const map={};
+  stop=false;
+  for(let p=from;p<=to;p++){
+    if(stop)break;
+    const h=p.toString(16).padStart(4,'0').toUpperCase();
+    const r=await elm.ask('22'+h,'62'+h,700);
+    if(r)map[h]=r;
+    prog((p-from)/(to-from||1));
+  }
+  prog(0);
+  return map;
+}
+document.getElementById('btnA').onclick=async()=>{
+  log('\nSnapshot A…');snapA=await snapshot();
+  log(`A: ${Object.keys(snapA).length} responding PIDs`,'hit');};
+document.getElementById('btnB').onclick=async()=>{
+  log('\nSnapshot B…');snapB=await snapshot();
+  log(`B: ${Object.keys(snapB).length} responding PIDs`,'hit');};
+document.getElementById('btnDiff').onclick=()=>{
+  if(!snapA||!snapB){log('Need both snapshots first.','err');return;}
+  log('\n=== CHANGED BETWEEN A AND B ===');
+  let n=0;
+  for(const k of Object.keys(snapA))
+    if(snapB[k]!==undefined&&snapB[k]!==snapA[k]){n++;log(`  22${k}: ${snapA[k]} -> ${snapB[k]}`,'chg');}
+  for(const k of Object.keys(snapB))
+    if(snapA[k]===undefined){n++;log(`  22${k}: (absent) -> ${snapB[k]}`,'chg');}
+  log(`=== ${n} changed ===`,'hit');
+};
+
+// keep the screen on while scanning
+let wl=null;
+async function wake(){try{if('wakeLock' in navigator&&document.visibilityState==='visible')
+  wl=await navigator.wakeLock.request('screen');}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')wake();});
+wake();
+</script>
+</body>
+</html>
