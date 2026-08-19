@@ -34,6 +34,9 @@ const KNOWN_UART_SERVICES = [
   '0000ffe0-0000-1000-8000-00805f9b34fb', // HM-10/CC41 UART clone
   '0000fee7-0000-1000-8000-00805f9b34fb', // additional common OBD BLE clone service
   'e7810a71-73ae-499d-8c15-faa9aef0c3f2', // some OBDLink/Veepeak BLE clones
+  // --- Veepeak 66:1E:87:06:30:B3 (confirmed via nRF Connect, Aug 2026) ---
+  '0000d0ff-3c17-d293-8e48-14fe2e4da212', // vendor service A
+  '00006287-3c17-d293-8e48-14fe2e4da212', // vendor service B
 ];
 
 class ELM327 {
@@ -51,8 +54,12 @@ class ELM327 {
   // Chrome afterward, which is what lets connectToKnownDevice() skip it later.
   async connect(log) {
     log('Requesting BLE device…');
+    // NOTE: this adapter advertises as "VEEPEAK", not "OBD...", so a
+    // namePrefix:'OBD' filter hides it from the picker entirely. Show
+    // everything and let the user pick; optionalServices is what actually
+    // grants access to the vendor UART services once connected.
     const device = await navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: 'OBD' }],
+      acceptAllDevices: true,
       optionalServices: KNOWN_UART_SERVICES,
     });
     await this._connectToDevice(device, log);
