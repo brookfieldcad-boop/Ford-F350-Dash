@@ -8,17 +8,40 @@
 // Formulas verified against community Torque Pro PID logs for the
 // 2011+ Ford 6.7L Powerstroke — sanity-check against real readings
 // once connected (e.g. coolant should settle ~190-210F warmed up).
+// Live barometric pressure, read once at connect from PID 0133 (kPa).
+// Boost is a *gauge* pressure = manifold absolute - ambient, so using a
+// hardcoded 14.7 psi under-reads at altitude. Calgary sits ~1045 m, where
+// ambient is nearer 13.0 psi — that alone was ~1.7 psi of error.
+let BARO_PSI = 14.7;
+
+const C = f => (f - 32) * 5 / 9;              // °F formula -> °C
+const KPH = mph => mph * 1.609344;
+
 const PIDS = {
-  speed:   { mode: '01', pid: '0D', bytes: 1, decode: b => b[0], unit: 'MPH', gauge: 'speedVal', kind: 'text' },
+  speed:   { mode: '01', pid: '0D', bytes: 1, decode: b => b[0] * 1.609344, unit: 'km/h', gauge: 'speedVal', kind: 'text' },
   rpm:     { mode: '01', pid: '0C', bytes: 2, decode: b => ((b[0] * 256) + b[1]) / 4, unit: 'RPM', gauge: 'rpmVal', kind: 'rpm' },
-  coolant: { mode: '01', pid: '05', bytes: 1, decode: b => (b[0] - 40) * 9 / 5 + 32, unit: '°F', gauge: 'g-coolant', kind: 'gauge', min: 100, max: 260 },
+  coolant: { mode: '01', pid: '05', bytes: 1, decode: b => b[0] - 40, unit: '°C', gauge: 'g-coolant', kind: 'gauge', min: 40, max: 120 },
   fuel:    { mode: '01', pid: '2F', bytes: 1, decode: b => (b[0] / 255) * 100, unit: '%', gauge: 'fuelPct', kind: 'bar' },
-  egt:     { mode: '22', pid: 'F478', bytes: 8, decode: b => (((b[0] * 256) + b[1]) * 0.18) - 40, unit: '°F', gauge: 'g-egt', kind: 'gauge', min: 300, max: 1600 },
-  boost:   { mode: '01', pid: '87', bytes: 2, decode: b => ((((b[0] * 256) + b[1]) * 0.00393) + 2.25) - 14.7, unit: 'PSI', gauge: 'g-boost', kind: 'gauge', min: 0, max: 35 },
+  egt:     { mode: '22', pid: 'F478', bytes: 8, decode: b => C((((b[0] * 256) + b[1]) * 0.18) - 40), unit: '°C', gauge: 'g-egt', kind: 'gauge', min: 150, max: 900 },
+  // FIXED: the community equation is ((((B*256)+C)*0.00393)+2.25)-Baro().
+  // B and C are the SECOND and THIRD data bytes, not the first two — we were
+  // decoding A,B, which is why this sat pinned near -11 psi all drive.
+  boost:   { mode: '01', pid: '87', bytes: 4, decode: b => ((((b[1] * 256) + b[2]) * 0.00393) + 2.25) - BARO_PSI, unit: 'PSI', gauge: 'g-boost', kind: 'gauge', min: 0, max: 35 },
   soot:    { mode: '22', pid: '042C', bytes: 2, decode: b => ((((b[0] * 256) + b[1]) * (100 / 65535)) - 1) / 1.75 * 100, unit: '%', gauge: 'g-soot', kind: 'gauge', min: 0, max: 100 },
-  trans:   { mode: '22', pid: '1E1C', bytes: 2, decode: b => (((b[0] << 24 >> 24) * 256) + b[1]) * (9 / 80) + 32, unit: '°F', gauge: 'g-trans', kind: 'gauge', min: 100, max: 260 },
+  trans:   { mode: '22', pid: '1E1C', bytes: 2, decode: b => C((((b[0] << 24 >> 24) * 256) + b[1]) * (9 / 80) + 32), unit: '°C', gauge: 'g-trans', kind: 'gauge', min: 40, max: 140 },
   def:     { mode: '22', pid: 'F485', bytes: 1, decode: b => (b[0] / 15) * 100, unit: '%', gauge: 'defPct', kind: 'bar' },
 };
+
+// 22042C answered NO DATA on this 2021 — that PID list dates from 2014-era
+// trucks. Rather than guess, try each candidate once at connect and keep
+// whichever the ECU actually answers. The log names the winner.
+const SOOT_CANDIDATES = [
+  { mode: '22', pid: '042C', bytes: 2, decode: b => ((((b[0] * 256) + b[1]) * (100 / 65535)) - 1) / 1.75 * 100 },
+  { mode: '22', pid: '045C', bytes: 2, decode: b => ((b[0] * 256) + b[1]) * (100 / 65535) },
+  { mode: '22', pid: 'F45C', bytes: 2, decode: b => ((b[0] * 256) + b[1]) * (100 / 65535) },
+  { mode: '22', pid: '1C4F', bytes: 2, decode: b => ((b[0] * 256) + b[1]) * (100 / 65535) },
+  { mode: '01', pid: '7C',   bytes: 4, decode: b => ((b[0] * 256) + b[1]) * (100 / 65535) },
+];
 
 const POLL_ORDER = ['speed', 'rpm', 'coolant', 'fuel', 'egt', 'boost', 'soot', 'trans', 'def'];
 
@@ -84,6 +107,7 @@ class ELM327 {
     this.device.addEventListener('gattserverdisconnected', () => {
       this.connected = false;
       log('Disconnected.');
+      if (typeof releaseWakeLock === 'function') releaseWakeLock();
     });
 
     const server = await this.device.gatt.connect();
@@ -161,6 +185,8 @@ class ELM327 {
     log('BLE link up. Initializing ELM327…');
     await this._initElm();
     log('ELM327 ready.');
+    await this._readBaro(log);
+    await this._probeSoot(log);
   }
 
   _onData(event) {
@@ -230,6 +256,34 @@ class ELM327 {
     for (const cmd of initCmds) {
       try { await this.sendCommand(cmd, 3000); } catch (e) { /* keep going, some adapters skip ATZ reply */ }
     }
+  }
+
+  // PID 0133 = absolute barometric pressure, one byte, kPa.
+  async _readBaro(log) {
+    try {
+      const v = await this.readPid({ mode: '01', pid: '33', bytes: 1, decode: b => b[0] });
+      if (v > 50 && v < 115) {
+        BARO_PSI = v * 0.145038;
+        log(`Barometric ${Math.round(v)} kPa (${BARO_PSI.toFixed(1)} psi) — boost zeroed to ambient.`);
+      }
+    } catch (e) {
+      log('Baro PID unsupported, boost falls back to 14.7 psi reference.');
+    }
+  }
+
+  // Ask the truck which soot PID it actually answers instead of assuming.
+  async _probeSoot(log) {
+    for (const cand of SOOT_CANDIDATES) {
+      try {
+        const v = await this.readPid(cand);
+        if (Number.isFinite(v)) {
+          PIDS.soot = { ...PIDS.soot, ...cand };
+          log(`Soot PID ${cand.mode}${cand.pid} answered (${v.toFixed(1)}) — using it.`);
+          return;
+        }
+      } catch (e) { /* try the next candidate */ }
+    }
+    log('No soot PID answered. Needs FORScan to identify the right one for a 2021.');
   }
 
   async readPid(def) {
@@ -350,6 +404,7 @@ connectBtn.addEventListener('click', async () => {
 async function markConnected() {
   statusText.textContent = 'Connected — live data';
   statusContainer.classList.add('live');
+  requestWakeLock();
   pollLoop();
 }
 
@@ -362,7 +417,12 @@ async function tryAutoConnect() {
   if (!navigator.bluetooth || !navigator.bluetooth.getDevices) return;
   try {
     const known = await navigator.bluetooth.getDevices();
-    const obd = known.find((d) => (d.name || '').toUpperCase().startsWith('OBD'));
+    // Same trap as the picker: this adapter is named "VEEPEAK", so a
+    // startsWith('OBD') test silently skipped it and auto-reconnect never
+    // fired. Prefer a known-looking name, otherwise just take the first
+    // device we've been granted — there's normally only one.
+    const looksRight = (d) => /OBD|VEEPEAK|ELM/i.test(d.name || '');
+    const obd = known.find(looksRight) || known[0];
     if (!obd) return;
     statusText.textContent = 'Reconnecting to ' + obd.name + '…';
     await elm.connectToKnownDevice(obd, log);
@@ -374,6 +434,39 @@ async function tryAutoConnect() {
   }
 }
 window.addEventListener('load', tryAutoConnect);
+
+// ---- Keep the screen awake -------------------------------------
+// Screen Wake Lock is dropped by the browser whenever the page is hidden
+// (app switch, screen off, incoming call), and it does NOT come back on its
+// own — so re-request it every time we become visible again.
+let wakeLock = null;
+
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator)) {
+    log('Screen Wake Lock not supported by this browser.');
+    return;
+  }
+  if (document.visibilityState !== 'visible') return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    log('Screen will stay on.');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch (err) {
+    // Most common cause is the OS refusing under battery saver.
+    log('Could not keep screen on: ' + err.message);
+  }
+}
+
+async function releaseWakeLock() {
+  try { if (wakeLock) await wakeLock.release(); } catch (e) { /* already gone */ }
+  wakeLock = null;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && !wakeLock) requestWakeLock();
+});
+
+window.addEventListener('load', requestWakeLock);
 
 // register service worker for offline install
 if ('serviceWorker' in navigator) {
