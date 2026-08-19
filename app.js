@@ -39,6 +39,13 @@ const KNOWN_UART_SERVICES = [
   '00006287-3c17-d293-8e48-14fe2e4da212', // vendor service B
 ];
 
+// Exact characteristic layout confirmed on this unit.
+const VEEPEAK = {
+  service: '0000fff0-0000-1000-8000-00805f9b34fb',
+  tx:      '0000fff2-0000-1000-8000-00805f9b34fb', // WRITE / WRITE NO RESPONSE
+  rx:      '0000fff1-0000-1000-8000-00805f9b34fb', // NOTIFY
+};
+
 class ELM327 {
   constructor() {
     this.device = null;
@@ -80,21 +87,64 @@ class ELM327 {
     });
 
     const server = await this.device.gatt.connect();
-    const services = await server.getPrimaryServices();
+    let services = await server.getPrimaryServices();
 
-    let found = false;
+    // Order matters. The old code took the FIRST service exposing any
+    // notify + any write characteristic, which on this adapter can latch
+    // onto a vendor service that isn't the ELM327 UART at all — the link
+    // comes up fine and then every write returns "GATT Error Unknown".
+    // Try the known UART services in preference order first.
+    const rank = (uuid) => {
+      const i = KNOWN_UART_SERVICES.indexOf(uuid.toLowerCase());
+      return i === -1 ? 999 : i;
+    };
+    services = services.slice().sort((a, b) => rank(a.uuid) - rank(b.uuid));
+
+    // Dump everything we can see — if auto-detect still picks wrong, this
+    // log tells us exactly which UUIDs to hardcode.
     for (const service of services) {
       const chars = await service.getCharacteristics();
-      let candidateTx = null, candidateRx = null;
       for (const ch of chars) {
-        if (ch.properties.notify) candidateRx = ch;
-        if (ch.properties.write || ch.properties.writeWithoutResponse) candidateTx = ch;
+        const p = ch.properties;
+        const flags = [p.write && 'write', p.writeWithoutResponse && 'writeNR',
+                       p.notify && 'notify', p.indicate && 'indicate',
+                       p.read && 'read'].filter(Boolean).join(',');
+        log(`  svc ${service.uuid.slice(0, 8)} char ${ch.uuid.slice(0, 8)} [${flags}]`);
       }
+    }
+
+    // --- Confirmed layout for this Veepeak (nRF Connect, Aug 2026) ---
+    //   service 0xFFF0
+    //     0xFFF2  WRITE, WRITE NO RESPONSE   -> TX (commands to the ELM327)
+    //     0xFFF1  NOTIFY (CCCD 0x2902)       -> RX (responses back)
+    // Try this exact pairing first; fall back to auto-detect if a future
+    // adapter looks different.
+    let found = false;
+    try {
+      const svc = await server.getPrimaryService(VEEPEAK.service);
+      this.txChar = await svc.getCharacteristic(VEEPEAK.tx);
+      this.rxChar = await svc.getCharacteristic(VEEPEAK.rx);
+      found = true;
+      log('Comms: FFF0 / tx FFF2 / rx FFF1 (known layout)');
+    } catch (e) {
+      log('Known FFF0 layout not present, falling back to auto-detect…');
+    }
+
+    for (const service of found ? [] : services) {
+      const chars = await service.getCharacteristics();
+      // Prefer write-without-response for TX (what these modules expect),
+      // and never reuse the TX characteristic as RX.
+      const txCandidates = chars.filter(c => c.properties.writeWithoutResponse || c.properties.write);
+      txCandidates.sort((a, b) => (b.properties.writeWithoutResponse ? 1 : 0) - (a.properties.writeWithoutResponse ? 1 : 0));
+      const candidateTx = txCandidates[0] || null;
+      const candidateRx = chars.find(c => c.properties.notify && c !== candidateTx)
+                       || chars.find(c => c.properties.notify)
+                       || null;
       if (candidateTx && candidateRx) {
         this.txChar = candidateTx;
         this.rxChar = candidateRx;
         found = true;
-        log(`Using service ${service.uuid.slice(0, 8)}… for comms.`);
+        log(`Comms: svc ${service.uuid.slice(0, 8)} tx ${candidateTx.uuid.slice(0, 8)} rx ${candidateRx.uuid.slice(0, 8)}`);
         break;
       }
     }
@@ -133,10 +183,24 @@ class ELM327 {
     // chunk to 20 bytes for BLE MTU safety
     for (let i = 0; i < data.length; i += 20) {
       const chunk = data.slice(i, i + 20);
-      if (this.txChar.properties.writeWithoutResponse) {
-        await this.txChar.writeValueWithoutResponse(chunk);
-      } else {
-        await this.txChar.writeValue(chunk);
+      try {
+        if (this.txChar.properties.writeWithoutResponse) {
+          await this.txChar.writeValueWithoutResponse(chunk);
+        } else {
+          await this.txChar.writeValue(chunk);
+        }
+      } catch (err) {
+        // Some stacks reject the "correct" write type; try the other one
+        // before giving up, and name the characteristic in the error.
+        try {
+          if (this.txChar.properties.writeWithoutResponse) {
+            await this.txChar.writeValue(chunk);
+          } else {
+            await this.txChar.writeValueWithoutResponse(chunk);
+          }
+        } catch (err2) {
+          throw new Error(`write failed on char ${this.txChar.uuid.slice(0, 8)}: ${err.message}`);
+        }
       }
     }
   }
