@@ -9,8 +9,8 @@ const ASSETS = [
   './index.html',
   './app.js',
   './turbo.html',
-  './assets/kaiser-turbo.jpg',
-  './assets/compressor-wheel.png',
+  './kaiser-turbo.jpg',
+  './compressor-wheel.png',
   './manifest.json',
   './icon-192.png',
   './icon-512.png'
