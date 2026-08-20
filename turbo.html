@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Kaiser Turbo Boost Animation</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --kaiser-green: #68ff36;
+      --panel: rgba(4, 8, 7, 0.88);
+      --line: rgba(104, 255, 54, 0.34);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+    }
+
+    #stage {
+      position: relative;
+      display: grid;
+      place-items: center;
+      width: 100%;
+      height: 100%;
+      background:
+        radial-gradient(circle at 30% 66%, rgba(32, 116, 24, 0.15), transparent 42%),
+        #000;
+    }
+
+    canvas {
+      display: block;
+      width: min(100vw, calc(100vh * 1.06));
+      height: auto;
+      max-height: 100vh;
+      object-fit: contain;
+    }
+
+    #panel {
+      position: absolute;
+      right: max(16px, env(safe-area-inset-right));
+      bottom: max(16px, env(safe-area-inset-bottom));
+      width: min(360px, calc(100vw - 32px));
+      padding: 14px 16px 15px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      box-shadow: 0 16px 60px rgba(0, 0, 0, 0.55), inset 0 1px rgba(255,255,255,0.04);
+      backdrop-filter: blur(18px);
+    }
+
+    #readout {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 11px;
+    }
+
+    #boostValue {
+      color: #fff;
+      font-size: clamp(32px, 8vw, 54px);
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.055em;
+      line-height: 0.9;
+      text-shadow: 0 0 30px rgba(104,255,54,0.16);
+    }
+
+    #boostValue small {
+      margin-left: 7px;
+      color: var(--kaiser-green);
+      font-size: 0.33em;
+      font-weight: 750;
+      letter-spacing: 0.08em;
+    }
+
+    #speedValue {
+      color: #93a19a;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.35;
+      text-align: right;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      height: 6px;
+      margin: 4px 0 13px;
+      border-radius: 999px;
+      accent-color: var(--kaiser-green);
+      cursor: pointer;
+    }
+
+    #actions {
+      display: flex;
+      gap: 9px;
+    }
+
+    button {
+      flex: 1;
+      min-height: 42px;
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 10px;
+      color: #fff;
+      background: rgba(255,255,255,0.055);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    button.primary {
+      border-color: rgba(104,255,54,0.55);
+      color: #061104;
+      background: var(--kaiser-green);
+    }
+
+    #hint {
+      margin-top: 10px;
+      color: #7c8982;
+      font-size: 11px;
+      line-height: 1.35;
+      text-align: center;
+    }
+
+    body.embed #panel { display: none; }
+  </style>
+</head>
+<body>
+  <main id="stage">
+    <canvas id="turbo" width="1536" height="1449" aria-label="Kaiser turbo with boost-controlled compressor wheel"></canvas>
+
+    <section id="panel" aria-label="Boost animation controls">
+      <div id="readout">
+        <div id="boostValue">0.0<small>PSI</small></div>
+        <div id="speedValue">0<br>visual RPM</div>
+      </div>
+      <input id="boostSlider" type="range" min="-15" max="40" value="0" step="0.1" aria-label="Boost pressure in PSI">
+      <div id="actions">
+        <button id="demoButton" class="primary">Run boost demo</button>
+        <button id="zeroButton">Return to zero</button>
+      </div>
+      <div id="hint">Drag the PSI slider. The exported API can receive your live OBD2 boost value.</div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const canvas = document.getElementById("turbo");
+      const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+      const boostSlider = document.getElementById("boostSlider");
+      const boostValue = document.getElementById("boostValue");
+      const speedValue = document.getElementById("speedValue");
+      const demoButton = document.getElementById("demoButton");
+      const zeroButton = document.getElementById("zeroButton");
+
+      const background = new Image();
+      const rotor = new Image();
+      background.src = "assets/kaiser-turbo.jpg";
+      rotor.src = "assets/compressor-wheel.png";
+
+      // Coordinates measured from the supplied 1536 x 1449 Kaiser turbo image.
+      // rx/ry keep the generated rotor inside the stationary silver inlet ring.
+      const rotorPlacement = Object.freeze({ x: 498, y: 996, rx: 229, ry: 248 });
+
+      const state = {
+        boostPsi: 0,
+        minPsi: -15,
+        maxPsi: 40,
+        currentRps: 0.35,
+        targetRps: 0.35,
+        angle: 0,
+        lastTime: performance.now(),
+        demoRunning: false,
+        paused: false,
+        demoStartedAt: 0,
+        ready: false
+      };
+
+      const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const smoothstep = t => t * t * (3 - 2 * t);
+
+      function pressureToRps(psi) {
+        const positiveBoost = Math.max(0, psi);
+        const normalized = clamp(positiveBoost / Math.max(1, state.maxPsi), 0, 1);
+        // Visual RPM is intentionally lower than real turbo shaft RPM to avoid aliasing.
+        return lerp(0.35, 28, Math.pow(normalized, 1.18));
+      }
+
+      function setBoostPsi(psi) {
+        state.boostPsi = clamp(Number(psi) || 0, state.minPsi, state.maxPsi);
+        state.targetRps = pressureToRps(state.boostPsi);
+        boostSlider.value = state.boostPsi.toFixed(1);
+        boostValue.innerHTML = `${state.boostPsi.toFixed(1)}<small>PSI</small>`;
+        window.dispatchEvent(new CustomEvent("kaiser-turbo-boost", {
+          detail: { boostPsi: state.boostPsi, targetRps: state.targetRps }
+        }));
+      }
+
+      function setBoostKpa(gaugeKpa) {
+        setBoostPsi(Number(gaugeKpa) * 0.1450377377);
+      }
+
+      function setBoostFromMapKpa(mapKpa, baroKpa = 101.325) {
+        // OBD2 Mode 01 PID 0B is absolute manifold pressure.
+        setBoostKpa(Number(mapKpa) - Number(baroKpa));
+      }
+
+      function setRange(minPsi, maxPsi) {
+        state.minPsi = Number(minPsi);
+        state.maxPsi = Math.max(1, Number(maxPsi));
+        boostSlider.min = state.minPsi;
+        boostSlider.max = state.maxPsi;
+        setBoostPsi(state.boostPsi);
+      }
+
+      function drawRotor(angle, rps) {
+        const { x, y, rx, ry } = rotorPlacement;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+        ctx.clip();
+
+        const cavity = ctx.createRadialGradient(x - 35, y - 30, 15, x, y, Math.max(rx, ry));
+        cavity.addColorStop(0, "#101414");
+        cavity.addColorStop(0.72, "#030505");
+        cavity.addColorStop(1, "#000");
+        ctx.fillStyle = cavity;
+        ctx.fillRect(x - rx, y - ry, rx * 2, ry * 2);
+
+        // Several nearby angular samples create a convincing high-speed rotational blur.
+        const blurSamples = clamp(Math.floor(rps / 4), 1, 8);
+        const angularSpread = Math.min(0.14, rps * 0.0048);
+
+        ctx.translate(x, y);
+        ctx.scale((rx * 1.035) / (rotor.width / 2), (ry * 1.035) / (rotor.height / 2));
+
+        for (let i = blurSamples - 1; i >= 0; i -= 1) {
+          const offset = blurSamples === 1 ? 0 : angularSpread * (i / (blurSamples - 1) - 0.5);
+          ctx.save();
+          ctx.rotate(angle + offset);
+          ctx.globalAlpha = blurSamples === 1 ? 1 : 0.22;
+          ctx.drawImage(rotor, -rotor.width / 2, -rotor.height / 2);
+          ctx.restore();
+        }
+
+        ctx.restore();
+      }
+
+      function updateDemo(now) {
+        if (!state.demoRunning) return;
+        const t = ((now - state.demoStartedAt) / 1000) % 7;
+        let psi;
+
+        if (t < 1.2) {
+          psi = -2;
+        } else if (t < 3.4) {
+          psi = lerp(-2, state.maxPsi, smoothstep((t - 1.2) / 2.2));
+        } else if (t < 4.7) {
+          psi = state.maxPsi;
+        } else {
+          psi = lerp(state.maxPsi, -2, smoothstep((t - 4.7) / 2.3));
+        }
+
+        setBoostPsi(psi);
+      }
+
+      function render(now) {
+        if (state.paused) return;
+        const dt = clamp((now - state.lastTime) / 1000, 0, 0.05);
+        state.lastTime = now;
+
+        updateDemo(now);
+
+        const response = state.targetRps > state.currentRps ? 8.5 : 3.1;
+        state.currentRps += (state.targetRps - state.currentRps) * (1 - Math.exp(-response * dt));
+        state.angle = (state.angle + state.currentRps * Math.PI * 2 * dt) % (Math.PI * 2);
+
+        if (state.ready) {
+          ctx.drawImage(background, 0, 0, canvas.width, canvas.height);
+          drawRotor(state.angle, state.currentRps);
+        } else {
+          ctx.fillStyle = "#000";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        speedValue.innerHTML = `${Math.round(state.currentRps * 60).toLocaleString()}<br>visual RPM`;
+        requestAnimationFrame(render);
+      }
+
+      Promise.all([
+        new Promise(resolve => { background.onload = resolve; }),
+        new Promise(resolve => { rotor.onload = resolve; })
+      ]).then(() => { state.ready = true; });
+
+      boostSlider.addEventListener("input", event => {
+        state.demoRunning = false;
+        demoButton.textContent = "Run boost demo";
+        demoButton.classList.add("primary");
+        setBoostPsi(event.target.value);
+      });
+
+      demoButton.addEventListener("click", () => {
+        state.demoRunning = !state.demoRunning;
+        state.demoStartedAt = performance.now();
+        demoButton.textContent = state.demoRunning ? "Stop demo" : "Run boost demo";
+        demoButton.classList.toggle("primary", !state.demoRunning);
+      });
+
+      zeroButton.addEventListener("click", () => {
+        state.demoRunning = false;
+        demoButton.textContent = "Run boost demo";
+        demoButton.classList.add("primary");
+        setBoostPsi(0);
+      });
+
+      const params = new URLSearchParams(location.search);
+      if (params.get("embed") === "1") document.body.classList.add("embed");
+
+      // ---- parent-frame bridge -------------------------------------
+      // The dash embeds this in an iframe, so the live boost value arrives
+      // by postMessage rather than a direct function call. Pause/resume so
+      // the rAF loop isn't burning phone battery on the other five pages.
+      window.addEventListener("message", (event) => {
+        const msg = event.data;
+        if (!msg || typeof msg !== "object") return;
+        if (msg.type === "boost" && Number.isFinite(msg.psi)) setBoostPsi(msg.psi);
+        else if (msg.type === "pause") state.paused = true;
+        else if (msg.type === "resume") {
+          if (state.paused) {
+            state.paused = false;
+            state.lastTime = performance.now();
+            requestAnimationFrame(render);
+          }
+        }
+      });
+
+      window.TurboGauge = Object.freeze({
+        setBoostPsi,
+        setBoostKpa,
+        setBoostFromMapKpa,
+        setRange,
+        getState: () => ({
+          boostPsi: state.boostPsi,
+          visualRpm: Math.round(state.currentRps * 60),
+          targetVisualRpm: Math.round(state.targetRps * 60)
+        })
+      });
+
+      setBoostPsi(0);
+      requestAnimationFrame(render);
+    })();
+  </script>
+</body>
+</html>

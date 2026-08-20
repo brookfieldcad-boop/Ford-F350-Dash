@@ -1,9 +1,16 @@
-// Minimal service worker so the dashboard installs as a real app icon
-// and keeps working with no signal/internet once cached.
-const CACHE_NAME = 'f350-dash-v1';
+// Service worker for the F350 dash.
+//
+// The original version was cache-first, which is why every update needed the
+// site data cleared by hand before it would show up. This one is network-first
+// for same-origin requests: online you always get the newest file, offline you
+// fall back to the last good copy. Bumping CACHE_NAME still purges old caches.
+const CACHE_NAME = 'f350-dash-v3';
 const ASSETS = [
   './index.html',
   './app.js',
+  './turbo.html',
+  './assets/kaiser-turbo.jpg',
+  './assets/compressor-wheel.png',
   './manifest.json',
   './icon-192.png',
   './icon-512.png'
@@ -11,7 +18,10 @@ const ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
+    // Don't let one missing file abort the whole install.
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.all(ASSETS.map((a) => cache.add(a).catch(() => {})))
+    )
   );
   self.skipWaiting();
 });
@@ -26,7 +36,17 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
+
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(req)
+      .then((res) => {
+        // Refresh the cached copy in the background for offline use.
+        const copy = res.clone();
+        caches.open(CACHE_NAME).then((c) => c.put(req, copy)).catch(() => {});
+        return res;
+      })
+      .catch(() => caches.match(req).then((c) => c || caches.match('./index.html')))
   );
 });

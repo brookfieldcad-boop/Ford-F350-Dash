@@ -92,6 +92,20 @@
   .fourwd-cards .num{font-size:30px;font-weight:700;}
   .fourwd-cards .num.on{color:var(--accent);text-shadow:0 0 12px rgba(57,255,138,0.5);}
 
+  /* ---- turbo page ---- */
+  .turbo-wrap{position:relative;width:100%;height:100%;background:#000;overflow:hidden;}
+  /* pointer-events:none is load-bearing — without it the iframe swallows the
+     swipe and you can't scroll off this page. */
+  #turboFrame{position:absolute;inset:0;width:100%;height:100%;border:0;
+              pointer-events:none;background:#000;}
+  .turbo-readout{position:absolute;left:20px;bottom:26px;pointer-events:none;}
+  .turbo-readout .psi{font-size:56px;font-weight:800;letter-spacing:-0.04em;
+                      line-height:1;color:var(--text-0);
+                      text-shadow:0 0 26px rgba(104,255,54,0.35);}
+  .turbo-readout .psi small{font-size:0.3em;font-weight:700;letter-spacing:0.1em;
+                            margin-left:8px;color:#68ff36;}
+  .turbo-readout .lbl{margin-top:6px;font-size:12px;letter-spacing:2.5px;color:var(--text-1);}
+
   /* ---- page dots ---- */
   .dots{
     position:fixed;bottom:10px;left:0;right:0;z-index:10;
@@ -381,10 +395,21 @@
       </div>
     </section>
 
+    <!-- PAGE 6: TURBO -->
+    <section class="page">
+      <div class="turbo-wrap">
+        <iframe id="turboFrame" src="./turbo.html?embed=1" title="Kaiser turbo boost animation"></iframe>
+        <div class="turbo-readout">
+          <div class="psi"><span data-metric="boost">--</span><small>PSI</small></div>
+          <div class="lbl">BOOST</div>
+        </div>
+      </div>
+    </section>
+
   </div>
 
   <div class="dots" id="dots">
-    <span class="active"></span><span></span><span></span><span></span><span></span>
+    <span class="active"></span><span></span><span></span><span></span><span></span><span></span>
   </div>
 
   <div class="debug" id="debugLog"></div>
@@ -400,10 +425,27 @@
   // page-dot indicator, driven by native scroll-snap swiping
   const pager = document.getElementById('pager');
   const dots = document.querySelectorAll('#dots span');
+  // The turbo canvas is a continuous requestAnimationFrame loop — leaving it
+  // running on the other five pages is pure battery burn, so pause it unless
+  // its page is actually on screen.
+  const TURBO_PAGE = 5;
+  let lastIdx = -1;
+  function tellTurbo(type) {
+    const f = document.getElementById('turboFrame');
+    if (f && f.contentWindow) f.contentWindow.postMessage({ type }, '*');
+  }
   pager.addEventListener('scroll', () => {
     const idx = Math.round(pager.scrollLeft / pager.clientWidth);
     dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+    if (idx !== lastIdx) {
+      lastIdx = idx;
+      tellTurbo(idx === TURBO_PAGE ? 'resume' : 'pause');
+    }
   }, { passive: true });
+  window.addEventListener('load', () => {
+    const f = document.getElementById('turboFrame');
+    if (f) f.addEventListener('load', () => tellTurbo('pause'));
+  });
 </script>
 <script src="app.js"></script>
 </body>

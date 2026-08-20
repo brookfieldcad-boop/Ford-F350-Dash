@@ -407,9 +407,18 @@ function applyDiffLock(locked) {
   el.classList.toggle('on', !!locked);
 }
 
+// The turbo animation lives in an iframe, so boost is handed over by
+// postMessage rather than a direct call. Guarded so the dash still runs fine
+// if turbo.html or its assets aren't uploaded yet.
+function pushBoostToTurbo(psi) {
+  const f = document.getElementById('turboFrame');
+  if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'boost', psi }, '*');
+}
+
 function applyReading(key, value) {
   if (key === 'drivemode') return applyDriveMode(value);
   if (key === 'difflock') return applyDiffLock(value);
+  if (key === 'boost') pushBoostToTurbo(value);
   const def = PIDS[key];
   const els = document.querySelectorAll(`[data-metric="${key}"]`);
   if (def.kind === 'text') {
