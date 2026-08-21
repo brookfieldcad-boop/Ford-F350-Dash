@@ -4,11 +4,12 @@
 // site data cleared by hand before it would show up. This one is network-first
 // for same-origin requests: online you always get the newest file, offline you
 // fall back to the last good copy. Bumping CACHE_NAME still purges old caches.
-const CACHE_NAME = 'f350-dash-v3';
+const CACHE_NAME = 'f350-dash-v4';
 const ASSETS = [
   './index.html',
   './app.js',
   './turbo.html',
+  './scanner.html',
   './kaiser-turbo.jpg',
   './compressor-wheel.png',
   './manifest.json',

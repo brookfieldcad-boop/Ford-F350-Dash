@@ -104,7 +104,23 @@ function log(s,cls){lines.push(s);const d=document.createElement('div');
   logEl.scrollTop=logEl.scrollHeight;}
 function prog(p){barEl.style.width=(p*100).toFixed(1)+'%';}
 
-let stop=false;
+let stop=false,busy=false;
+const JOB_BTNS=['btnStd','btnMods','btnSweep','btnA','btnB','btnConnect'];
+function setBusy(b){
+  busy=b;
+  JOB_BTNS.forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=b;});
+  const st=document.getElementById('btnStop'); if(st) st.disabled=!b;
+}
+// One job at a time. Overlapping runs shared a single pending-response promise
+// and trampled each other, which is what produced the interleaved log.
+function job(fn){
+  return async()=>{
+    if(busy){log('Already running — press STOP first.','err');return;}
+    setBusy(true); stop=false;
+    try{ await fn(); }catch(e){ log('ERROR '+e.message,'err'); }
+    finally{ setBusy(false); prog(0); }
+  };
+}
 document.getElementById('btnStop').onclick=()=>{stop=true;log('— stopping —','err');};
 document.getElementById('btnClear').onclick=()=>{lines=[];logEl.innerHTML='';};
 document.getElementById('btnCopy').onclick=async()=>{
@@ -125,6 +141,10 @@ class Elm{
     this.dev=dev;
     for(const c of ['ATZ','ATE0','ATL0','ATS0','ATH0','ATSP0'])
       await this.cmd(c,3000).catch(()=>{});
+    // ATSP0 doesn't pick a protocol until a real request goes out. Setting a
+    // header before that leaves the adapter mute — which is why the first scan
+    // came back empty and an identical later one worked.
+    await this.cmd('0100',5000).catch(()=>{});
     return dev.name||'adapter';
   }
   _rx(e){this.buf+=new TextDecoder().decode(e.target.value);
@@ -145,8 +165,11 @@ class Elm{
   async setHdr(h){
     if(this.hdr===h)return;
     await this.cmd('ATSH '+h,1500).catch(()=>{});
-    const resp=(parseInt(h,16)+8).toString(16).toUpperCase();
-    await this.cmd('ATCRA '+resp,1500).catch(()=>{});
+    if(h==='7E0'){ await this.cmd('ATAR',1500).catch(()=>{}); }
+    else {
+      const resp=(parseInt(h,16)+8).toString(16).toUpperCase();
+      await this.cmd('ATCRA '+resp,1500).catch(()=>{});
+    }
     this.hdr=h;
   }
   // Returns the hex payload after the positive-response header, or null.
@@ -164,11 +187,12 @@ class Elm{
 const elm=new Elm();
 
 document.getElementById('btnConnect').onclick=async()=>{
-  try{statusEl.textContent='Connecting…';
+  try{statusEl.textContent='Connecting…';setBusy(true);
     const n=await elm.connect();
     statusEl.textContent='Connected to '+n;
     log('Connected. ELM327 ready.','hit');
   }catch(e){statusEl.textContent='Failed: '+e.message;log('ERROR '+e.message,'err');}
+  finally{setBusy(false);}
 };
 
 // ---- 1. standard PIDs via the supported-PID bitmasks ----
@@ -196,7 +220,7 @@ async function scanStandard(){
   }
   prog(0);log('=== done ===','hit');
 }
-document.getElementById('btnStd').onclick=()=>scanStandard().catch(e=>log('ERROR '+e.message,'err'));
+document.getElementById('btnStd').onclick=job(scanStandard);
 
 // ---- 2. module discovery ----
 async function findModules(){
@@ -211,7 +235,7 @@ async function findModules(){
   await elm.setHdr('7E0');
   log('=== done ===','hit');
 }
-document.getElementById('btnMods').onclick=()=>findModules().catch(e=>log('ERROR '+e.message,'err'));
+document.getElementById('btnMods').onclick=job(findModules);
 
 // ---- 3. mode 22 sweep ----
 async function sweep(){
@@ -231,7 +255,7 @@ async function sweep(){
   }
   prog(0);log(`=== ${hits} responded ===`,'hit');
 }
-document.getElementById('btnSweep').onclick=()=>sweep().catch(e=>log('ERROR '+e.message,'err'));
+document.getElementById('btnSweep').onclick=job(sweep);
 
 // ---- 4. snapshot + diff ----
 // The point: you don't need to know which PID means "diff lock". Capture
@@ -254,12 +278,13 @@ async function snapshot(){
   prog(0);
   return map;
 }
-document.getElementById('btnA').onclick=async()=>{
+document.getElementById('btnA').onclick=job(async()=>{
   log('\nSnapshot A…');snapA=await snapshot();
-  log(`A: ${Object.keys(snapA).length} responding PIDs`,'hit');};
-document.getElementById('btnB').onclick=async()=>{
+  log(`A: ${Object.keys(snapA).length} responding PIDs`,'hit');});
+document.getElementById('btnB').onclick=job(async()=>{
   log('\nSnapshot B…');snapB=await snapshot();
-  log(`B: ${Object.keys(snapB).length} responding PIDs`,'hit');};
+  log(`B: ${Object.keys(snapB).length} responding PIDs`,'hit');
+  log('Now press DIFF.','hit');});
 document.getElementById('btnDiff').onclick=()=>{
   if(!snapA||!snapB){log('Need both snapshots first.','err');return;}
   log('\n=== CHANGED BETWEEN A AND B ===');

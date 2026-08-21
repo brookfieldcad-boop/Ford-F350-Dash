@@ -22,14 +22,28 @@ const PIDS = {
   rpm:     { mode: '01', pid: '0C', bytes: 2, decode: b => ((b[0] * 256) + b[1]) / 4, unit: 'RPM', gauge: 'rpmVal', kind: 'rpm' },
   coolant: { mode: '01', pid: '05', bytes: 1, decode: b => b[0] - 40, unit: '°C', gauge: 'g-coolant', kind: 'gauge', min: 40, max: 120 },
   fuel:    { mode: '01', pid: '2F', bytes: 1, decode: b => (b[0] / 255) * 100, unit: '%', gauge: 'fuelPct', kind: 'bar' },
-  egt:     { mode: '22', pid: 'F478', bytes: 8, decode: b => C((((b[0] * 256) + b[1]) * 0.18) - 40), unit: '°C', gauge: 'g-egt', kind: 'gauge', min: 150, max: 900 },
+  // EGT was pegged at 345 C all drive. 22F478 is a 2014-era community PID and
+  // it is not in this truck's supported list — 0178 (SAE "EGT Bank 1") IS, and
+  // it read 182 C at idle, which is what a warm 6.7 should show.
+  // Layout: A = sensor support mask, then 2 bytes per sensor, ((hi*256)+lo)/10 - 40.
+  egt:     { mode: '01', pid: '78', bytes: 9, decode: b => (((b[1] * 256) + b[2]) / 10) - 40, unit: '°C', gauge: 'g-egt', kind: 'gauge', min: 100, max: 900 },
+  egt2:    { mode: '01', pid: '78', bytes: 9, decode: b => (((b[3] * 256) + b[4]) / 10) - 40, unit: '°C', kind: 'none' },
   // FIXED: the community equation is ((((B*256)+C)*0.00393)+2.25)-Baro().
   // B and C are the SECOND and THIRD data bytes, not the first two — we were
   // decoding A,B, which is why this sat pinned near -11 psi all drive.
   boost:   { mode: '01', pid: '87', bytes: 4, decode: b => ((((b[1] * 256) + b[2]) * 0.00393) + 2.25) - BARO_PSI, unit: 'PSI', gauge: 'g-boost', kind: 'gauge', min: 0, max: 35 },
   soot:    { mode: '22', pid: '042C', bytes: 2, decode: b => ((((b[0] * 256) + b[1]) * (100 / 65535)) - 1) / 1.75 * 100, unit: '%', gauge: 'g-soot', kind: 'gauge', min: 0, max: 100 },
   trans:   { mode: '22', pid: '1E1C', bytes: 2, decode: b => C((((b[0] << 24 >> 24) * 256) + b[1]) * (9 / 80) + 32), unit: '°C', gauge: 'g-trans', kind: 'gauge', min: 40, max: 140 },
-  def:     { mode: '22', pid: 'F485', bytes: 1, decode: b => (b[0] / 15) * 100, unit: '%', gauge: 'defPct', kind: 'bar' },
+  // CONFIRMED from the truck's own supported-PID list, not guesswork.
+  // 019B is the SAE Diesel Exhaust Fluid sensor. Your DF 84 3F 88 decodes to
+  // 33% urea concentration (nominal is 32.5%, so the scaling checks out) and a
+  // 25% tank — the flat 100% from 22F485 was simply the wrong PID.
+  def:     { mode: '01', pid: '9B', bytes: 4, decode: b => (b[2] / 255) * 100, unit: '%', gauge: 'defPct', kind: 'bar' },
+  defConc: { mode: '01', pid: '9B', bytes: 4, decode: b => b[1] * 0.25, unit: '%', kind: 'none' },
+  // 01A6 odometer, 4 bytes, 0.1 km per bit.
+  odo:     { mode: '01', pid: 'A6', bytes: 4, decode: b => (((b[0] * 16777216) + (b[1] * 65536) + (b[2] * 256) + b[3]) * 0.1), unit: 'km', kind: 'odo' },
+  // 019D engine fuel rate, first pair, 0.02 g/s per bit — feeds economy.
+  fuelrate:{ mode: '01', pid: '9D', bytes: 4, decode: b => ((b[0] * 256) + b[1]) * 0.02, unit: 'g/s', kind: 'none' },
   // 015C is a standard OBD2 PID (engine oil temperature, A-40 in °C).
   oiltemp: { mode: '01', pid: '5C', bytes: 1, decode: b => b[0] - 40, unit: '°C', gauge: 'g-oiltemp', kind: 'gauge', min: 40, max: 140 },
   // Oil pressure is NOT standard OBD2 — resolved by probe at connect.
@@ -55,6 +69,12 @@ const OILPRESS_CANDIDATES = [
   { mode: '01', pid: '0A',   bytes: 1, decode: b => b[0] * 0.145038 },
 ];
 
+// If 0178 turns out wrong under load, these get tried in order.
+const EGT_CANDIDATES = [
+  { mode: '01', pid: '78', bytes: 9, decode: b => (((b[1] * 256) + b[2]) / 10) - 40 },
+  { mode: '22', pid: 'F478', bytes: 8, decode: b => ((((b[0] * 256) + b[1]) * 0.18) - 40 - 32) * 5 / 9 },
+];
+
 const SOOT_CANDIDATES = [
   { mode: '22', pid: '042C', bytes: 2, decode: b => ((((b[0] * 256) + b[1]) * (100 / 65535)) - 1) / 1.75 * 100 },
   { mode: '22', pid: '045C', bytes: 2, decode: b => ((b[0] * 256) + b[1]) * (100 / 65535) },
@@ -63,7 +83,8 @@ const SOOT_CANDIDATES = [
   { mode: '01', pid: '7C',   bytes: 4, decode: b => ((b[0] * 256) + b[1]) * (100 / 65535) },
 ];
 
-const POLL_ORDER = ['speed', 'rpm', 'coolant', 'fuel', 'egt', 'boost', 'soot', 'trans', 'def', 'oiltemp', 'oilpress'];
+const POLL_ORDER = ['speed', 'rpm', 'coolant', 'fuel', 'egt', 'boost', 'soot', 'trans', 'def',
+                    'oiltemp', 'oilpress', 'fuelrate', 'odo'];
 
 // ---- BLE UART auto-detect --------------------------------------
 // Cheap ELM327 BLE modules (incl. many Veepeak units) expose a
@@ -311,8 +332,8 @@ class ELM327 {
   }
 
   async _probeSoot(log) {
+    await this._probe('egt', EGT_CANDIDATES, 'EGT', log, v => v > -20 && v < 1000);
     await this._probe('soot', SOOT_CANDIDATES, 'Soot', log, v => v >= -5 && v <= 105);
-    await this._probe('def', DEF_CANDIDATES, 'DEF', log, v => v >= 0 && v <= 100);
     await this._probe('oilpress', OILPRESS_CANDIDATES, 'Oil pressure', log, v => v >= 0 && v <= 120);
   }
 
@@ -415,10 +436,38 @@ function pushBoostToTurbo(psi) {
   if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'boost', psi }, '*');
 }
 
+// Fuel economy isn't a PID — it's fuel rate over road speed.
+// 019D gives grams/second; diesel is ~0.832 kg/L.
+const DIESEL_KG_PER_L = 0.832;
+let lastSpeedKph = 0, lastFuelLph = 0;
+
+function updateEconomy() {
+  const els = document.querySelectorAll('[data-metric="econ"]');
+  if (!els.length) return;
+  // Below ~5 km/h L/100km blows up toward infinity, so show idle burn instead.
+  const txt = lastSpeedKph < 5
+    ? `${lastFuelLph.toFixed(1)} L/H`
+    : `${((lastFuelLph / lastSpeedKph) * 100).toFixed(1)} L/100KM`;
+  els.forEach((el) => { el.textContent = txt; });
+}
+
+function applyOdo(km) {
+  document.querySelectorAll('[data-metric="odo"]').forEach((el) => {
+    el.textContent = Math.round(km).toLocaleString() + ' km';
+  });
+}
+
 function applyReading(key, value) {
   if (key === 'drivemode') return applyDriveMode(value);
   if (key === 'difflock') return applyDiffLock(value);
   if (key === 'boost') pushBoostToTurbo(value);
+  if (key === 'odo') return applyOdo(value);
+  if (key === 'defConc') return;
+  if (key === 'fuelrate') {
+    lastFuelLph = (value * 3600) / (DIESEL_KG_PER_L * 1000);
+    return updateEconomy();
+  }
+  if (key === 'speed') { lastSpeedKph = value; updateEconomy(); }
   const def = PIDS[key];
   const els = document.querySelectorAll(`[data-metric="${key}"]`);
   if (def.kind === 'text') {
