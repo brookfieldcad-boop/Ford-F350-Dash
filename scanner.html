@@ -59,6 +59,16 @@
 </section>
 
 <section>
+  <h2>0 — RAW COMMAND <span style="color:var(--accent)">&larr; debug</span></h2>
+  <div class="sub">Sends exactly what you type and shows the adapter's raw reply.</div>
+  <div class="row">
+    <input id="rawCmd" value="22F190" style="width:120px">
+    <button id="btnRaw">SEND</button>
+    <button id="btnHdr">HEADERS: OFF</button>
+  </div>
+</section>
+
+<section>
   <h2>3 — MODE 22 SWEEP</h2>
   <div class="sub">Slow. 0000-FFFF on one module is ~1.5h. Start with a narrow range.</div>
   <div class="row">
@@ -105,7 +115,7 @@ function log(s,cls){lines.push(s);const d=document.createElement('div');
 function prog(p){barEl.style.width=(p*100).toFixed(1)+'%';}
 
 let stop=false,busy=false;
-const JOB_BTNS=['btnStd','btnMods','btnSweep','btnA','btnB','btnConnect'];
+const JOB_BTNS=['btnStd','btnMods','btnSweep','btnA','btnB','btnConnect','btnRaw','btnHdr'];
 function setBusy(b){
   busy=b;
   JOB_BTNS.forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=b;});
@@ -165,18 +175,22 @@ class Elm{
   async setHdr(h){
     if(this.hdr===h)return;
     await this.cmd('ATSH '+h,1500).catch(()=>{});
-    if(h==='7E0'){ await this.cmd('ATAR',1500).catch(()=>{}); }
-    else {
-      const resp=(parseInt(h,16)+8).toString(16).toUpperCase();
-      await this.cmd('ATCRA '+resp,1500).catch(()=>{});
-    }
+    // No ATCRA. On clone adapters it is frequently half-implemented, and a
+    // filter set to the wrong response ID silently discards everything —
+    // which looks identical to "the module isn't there". ATAR lets the
+    // adapter accept whatever replies; we match on the 62xxxx echo instead.
+    await this.cmd('ATAR',1500).catch(()=>{});
     this.hdr=h;
   }
   // Returns the hex payload after the positive-response header, or null.
   async ask(cmd,expect,ms=900){
     let raw;
-    try{raw=await this.cmd(cmd,ms);}catch(e){return null;}
+    try{raw=await this.cmd(cmd,ms);}catch(e){this.lastRaw='(timeout)';return null;}
+    this.lastRaw=raw.replace(/[\r\n]+/g,' ').trim();
     const up=raw.toUpperCase();
+    // 7F 22 xx is a negative response: the module IS answering, it just does
+    // not support that PID. Counting those proves we're actually talking to it.
+    if(up.replace(/[^0-9A-F]/g,'').includes('7F22')) this.negs=(this.negs||0)+1;
     if(up.includes('NO DATA')||up.includes('ERROR')||up.includes('?'))return null;
     const hex=up.replace(/[^0-9A-F]/g,'');
     const i=hex.indexOf(expect);
@@ -253,7 +267,11 @@ async function sweep(){
     if(r){hits++;log(`  22${h} = ${r}`,'hit');}
     prog((p-from)/(to-from||1));
   }
-  prog(0);log(`=== ${hits} responded ===`,'hit');
+  prog(0);
+  log(`=== ${hits} responded, ${elm.negs||0} refusals ===`,'hit');
+  if(!hits && !elm.negs) log('No replies at all — module silent on this address, or the sweep is not reaching it. Try the RAW box.','err');
+  else if(!hits) log('Module is alive (it refused those PIDs) — just the wrong range.','chg');
+  elm.negs=0;
 }
 document.getElementById('btnSweep').onclick=job(sweep);
 
@@ -295,6 +313,24 @@ document.getElementById('btnDiff').onclick=()=>{
     if(snapA[k]===undefined){n++;log(`  22${k}: (absent) -> ${snapB[k]}`,'chg');}
   log(`=== ${n} changed ===`,'hit');
 };
+
+let hdrOn=false;
+document.getElementById('btnHdr').onclick=job(async()=>{
+  hdrOn=!hdrOn;
+  await elm.cmd(hdrOn?'ATH1':'ATH0',1500).catch(()=>{});
+  document.getElementById('btnHdr').textContent='HEADERS: '+(hdrOn?'ON':'OFF');
+  log('Headers '+(hdrOn?'on — replies now show the responding CAN ID.':'off.'),'hit');
+});
+
+document.getElementById('btnRaw').onclick=job(async()=>{
+  const c=document.getElementById('rawCmd').value.trim();
+  const hdr=document.getElementById('hdr').value.trim().toUpperCase();
+  if(/^[0-9A-Fa-f]{4,6}$/.test(c)) await elm.setHdr(hdr);
+  log(`\n> ${c}   (module ${hdr})`);
+  let raw;
+  try{ raw=await elm.cmd(c,4000); }catch(e){ log('  (no reply / timeout)','err'); return; }
+  log('  '+raw.replace(/[\r\n]+/g,' ').trim(),'hit');
+});
 
 // keep the screen on while scanning
 let wl=null;
