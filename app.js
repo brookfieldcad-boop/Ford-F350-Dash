@@ -15,10 +15,14 @@
 let BARO_PSI = 14.7;
 
 const C = f => (f - 32) * 5 / 9;              // °F formula -> °C
-const KPH = mph => mph * 1.609344;
 
 const PIDS = {
-  speed:   { mode: '01', pid: '0D', bytes: 1, decode: b => b[0] * 1.609344, unit: 'km/h', gauge: 'speedVal', kind: 'text' },
+  // 010D is defined by SAE as km/h ALREADY — one byte, 0-255, no scaling.
+  // The original code labelled it MPH and used the raw byte, so it was really
+  // showing km/h under an MPH label. When I switched the dash to metric I
+  // "converted" mph->km/h on top of that, inflating every reading by 61%.
+  // At a true 50 km/h that reads 80 — the ~30 km/h error you saw.
+  speed:   { mode: '01', pid: '0D', bytes: 1, decode: b => b[0], unit: 'km/h', gauge: 'speedVal', kind: 'text' },
   rpm:     { mode: '01', pid: '0C', bytes: 2, decode: b => ((b[0] * 256) + b[1]) / 4, unit: 'RPM', gauge: 'rpmVal', kind: 'rpm' },
   coolant: { mode: '01', pid: '05', bytes: 1, decode: b => b[0] - 40, unit: '°C', gauge: 'g-coolant', kind: 'gauge', min: 40, max: 120 },
   fuel:    { mode: '01', pid: '2F', bytes: 1, decode: b => (b[0] / 255) * 100, unit: '%', gauge: 'fuelPct', kind: 'bar' },
@@ -45,6 +49,8 @@ const PIDS = {
   // 019D engine fuel rate, first pair, 0.02 g/s per bit — feeds economy.
   fuelrate:{ mode: '01', pid: '9D', bytes: 4, decode: b => ((b[0] * 256) + b[1]) * 0.02, unit: 'g/s', kind: 'none' },
   // 015C is a standard OBD2 PID (engine oil temperature, A-40 in °C).
+  // 015C has 1 degree resolution, so a 1 degree gap against the cluster is
+  // just rounding on one side or the other — nothing to correct.
   oiltemp: { mode: '01', pid: '5C', bytes: 1, decode: b => b[0] - 40, unit: '°C', gauge: 'g-oiltemp', kind: 'gauge', min: 40, max: 140 },
   // Oil pressure is NOT standard OBD2 — resolved by probe at connect.
   oilpress:{ mode: '22', pid: '1668', bytes: 2, decode: b => ((b[0] * 256) + b[1]) * 0.0145038, unit: 'PSI', gauge: 'g-oilpress', kind: 'gauge', min: 0, max: 90 },
@@ -441,14 +447,44 @@ function pushBoostToTurbo(psi) {
 const DIESEL_KG_PER_L = 0.832;
 let lastSpeedKph = 0, lastFuelLph = 0;
 
+// Instantaneous L/100km is genuinely jumpy — it swings with every throttle
+// input. The truck's own display is averaged, which is why it looks calm.
+// Two things here: a fast exponential average for the live number, and true
+// running totals (litres burned / km covered) for a trip figure.
+let econEma = null;
+const ECON_ALPHA = 0.06;          // ~30s of smoothing at our poll rate
+let tripLitres = 0, tripKm = 0, lastEconT = null;
+
 function updateEconomy() {
   const els = document.querySelectorAll('[data-metric="econ"]');
   if (!els.length) return;
-  // Below ~5 km/h L/100km blows up toward infinity, so show idle burn instead.
-  const txt = lastSpeedKph < 5
-    ? `${lastFuelLph.toFixed(1)} L/H`
-    : `${((lastFuelLph / lastSpeedKph) * 100).toFixed(1)} L/100KM`;
-  els.forEach((el) => { el.textContent = txt; });
+
+  // Integrate real fuel and distance between samples for the trip average.
+  const now = Date.now();
+  if (lastEconT !== null) {
+    const dtH = (now - lastEconT) / 3600000;
+    if (dtH > 0 && dtH < 0.01) {          // ignore long gaps (app backgrounded)
+      tripLitres += lastFuelLph * dtH;
+      tripKm     += lastSpeedKph * dtH;
+    }
+  }
+  lastEconT = now;
+
+  if (lastSpeedKph < 5) {
+    // Stopped: L/100km is meaningless, show idle burn instead.
+    els.forEach((el) => { el.textContent = `${lastFuelLph.toFixed(1)} L/H`; });
+    return;
+  }
+
+  const inst = (lastFuelLph / lastSpeedKph) * 100;
+  econEma = econEma === null ? inst : econEma + ECON_ALPHA * (inst - econEma);
+  const trip = tripKm > 0.5 ? (tripLitres / tripKm) * 100 : null;
+
+  els.forEach((el) => {
+    el.textContent = trip
+      ? `${econEma.toFixed(1)} / ${trip.toFixed(1)} L/100KM`
+      : `${econEma.toFixed(1)} L/100KM`;
+  });
 }
 
 function applyOdo(km) {
